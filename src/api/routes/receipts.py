@@ -1,13 +1,18 @@
-from fastapi import APIRouter, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 
 from src.api.schemas import AnalyzeResponse, InsightResponse
+from src.auth.dependencies import get_current_user
+from src.db.models import User
 from src.pipeline import PipelineError, analyze_receipt
 
 router = APIRouter(prefix="/receipts", tags=["receipts"])
 
 
 @router.post("/analyze", response_model=AnalyzeResponse, status_code=status.HTTP_200_OK)
-async def analyze(file: UploadFile) -> AnalyzeResponse:
+async def analyze(
+    file: UploadFile,
+    current_user: User = Depends(get_current_user),
+) -> AnalyzeResponse:
     """
     Upload a receipt image and receive an AI-generated spending insight.
 

@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # LLM
-    gemini_api_key: str = Field(description="Google Gemini API key")
+    gemini_api_key: str = Field(default="", description="Google Gemini API key")
     gemini_model: str = Field(default="gemini-2.5-flash")
 
     # Vector store (ChromaDB)
@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     api_host: str = Field(default="0.0.0.0")
     api_port: int = Field(default=8080)
     debug: bool = Field(default=False)
+
+    # PostgreSQL
+    database_url: str = Field(default="postgresql+asyncpg://postgres:password@localhost:5432/spendsense")
+
+    # JWT
+    jwt_secret_key: str = Field(default="changeme-use-a-real-secret-in-production")
+    jwt_algorithm: str = Field(default="HS256")
+    jwt_expire_minutes: int = Field(default=1440)  # 24h
 
 
 @lru_cache

@@ -102,7 +102,7 @@ def cache_lookup(vector: list[float], receipt_id: str) -> ToolResult:
     )
 
 
-def cache_store(vector: list[float], insight: Insight) -> ToolResult:
+def cache_store(vector: list[float], insight: Insight, user_id: str = "") -> ToolResult:
     """
     Persist a new insight vector in ChromaDB.
 
@@ -123,6 +123,7 @@ def cache_store(vector: list[float], insight: Insight) -> ToolResult:
                 "category": insight.category,
                 "tips": json.dumps(insight.tips),
                 "vector_id": vector_id,
+                "user_id": user_id,
             }],
         )
     except Exception as exc:
@@ -137,6 +138,78 @@ def cache_store(vector: list[float], insight: Insight) -> ToolResult:
         data={"vector_id": vector_id},
         artifacts={"vector_id": vector_id},
     )
+
+
+def _metadata_to_insight(meta: dict) -> Insight:
+    tips_raw = meta.get("tips", "[]")
+    tips: list[str] = json.loads(tips_raw) if isinstance(tips_raw, str) else tips_raw
+    return Insight(
+        id=uuid.UUID(meta["insight_id"]) if meta.get("insight_id") else uuid.uuid4(),
+        receipt_id=uuid.UUID(meta["receipt_id"]) if meta.get("receipt_id") else uuid.uuid4(),
+        summary=meta.get("summary", ""),
+        category=meta.get("category", "Other"),
+        tips=tips,
+        source=InsightSource(meta.get("source", InsightSource.LLM)),
+        similarity_score=meta.get("similarity_score"),
+        vector_id=meta.get("vector_id"),
+    )
+
+
+def list_insights(user_id: str, limit: int = 50, offset: int = 0) -> ToolResult:
+    """
+    List cached insights for a given user_id.
+
+    Returns:
+        status=success + data=list[Insight]
+        status=error    if ChromaDB query fails
+    """
+    try:
+        col = _collection()
+        where: dict | None = {"user_id": user_id} if user_id else None
+        kwargs: dict = {"include": ["metadatas"], "limit": limit, "offset": offset}
+        if where:
+            kwargs["where"] = where
+        results = col.get(**kwargs)
+        metadatas: list[dict] = results.get("metadatas") or []
+        insights = [_metadata_to_insight(m) for m in metadatas if m]
+        return ToolResult.success(
+            summary=f"Listed {len(insights)} insights",
+            data=insights,
+        )
+    except Exception as exc:
+        return ToolResult.error(
+            summary="ChromaDB list failed",
+            error_hint=f"{type(exc).__name__}: {exc}",
+        )
+
+
+def get_insight(insight_id: str, user_id: str = "") -> ToolResult:
+    """
+    Retrieve a single cached insight by its vector_id.
+
+    Returns:
+        status=success + data=Insight  if found and authorized
+        status=warning                 if not found
+        status=error                   if forbidden or query fails
+    """
+    try:
+        col = _collection()
+        results = col.get(ids=[insight_id], include=["metadatas"])
+        metadatas: list[dict] = results.get("metadatas") or []
+        if not metadatas:
+            return ToolResult.warning("Insight not found", data=None)
+        meta = metadatas[0]
+        if user_id and meta.get("user_id", "") != user_id:
+            return ToolResult.error(
+                summary="Forbidden",
+                error_hint="insight belongs to another user",
+            )
+        return ToolResult.success("Found insight", data=_metadata_to_insight(meta))
+    except Exception as exc:
+        return ToolResult.error(
+            summary="ChromaDB get failed",
+            error_hint=f"{type(exc).__name__}: {exc}",
+        )
 
 
 def cache_delete(vector_id: str) -> ToolResult:

@@ -1,7 +1,9 @@
-from fastapi import APIRouter, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, status
 
 from src.api.schemas import FeedbackRequest, FeedbackResponse
+from src.auth.dependencies import get_current_user
 from src.cache.vector_store import cache_delete
+from src.db.models import User
 from src.models.expense import FeedbackAction
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
@@ -11,6 +13,7 @@ router = APIRouter(prefix="/feedback", tags=["feedback"])
 async def submit_feedback(
     insight_id: str = Path(description="Insight ID from the analyze response"),
     body: FeedbackRequest = ...,
+    current_user: User = Depends(get_current_user),
 ) -> FeedbackResponse:
     """
     Submit 👍/👎 feedback for an insight.

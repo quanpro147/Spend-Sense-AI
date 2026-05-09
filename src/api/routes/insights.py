@@ -1,14 +1,50 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from src.api.schemas import HealthResponse
+from src.api.schemas import HealthResponse, InsightListResponse, InsightResponse
+from src.auth.dependencies import get_current_user
+from src.cache.vector_store import get_insight, list_insights
+from src.db.models import User
 
 router = APIRouter(tags=["insights"])
 
 
 @router.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    return HealthResponse(status="ok")
+    return HealthResponse()
 
 
-# GET /insights and GET /insights/{id} will query ChromaDB directly.
-# Placeholder — implement after ChromaDB list/get APIs are confirmed.
+@router.get("/insights", response_model=InsightListResponse)
+async def list_user_insights(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
+) -> InsightListResponse:
+    result = list_insights(user_id=str(current_user.id), limit=limit, offset=offset)
+    if result.failed:
+        raise HTTPException(
+            status_code=500,
+            detail=result.error_hint or "Failed to list insights",
+        )
+    items: list = result.data or []
+    return InsightListResponse(
+        items=[InsightResponse.from_insight(i) for i in items],
+        total=len(items),
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/insights/{insight_id}", response_model=InsightResponse)
+async def get_user_insight(
+    insight_id: str,
+    current_user: User = Depends(get_current_user),
+) -> InsightResponse:
+    result = get_insight(insight_id=insight_id, user_id=str(current_user.id))
+    if result.failed:
+        raise HTTPException(
+            status_code=500,
+            detail=result.error_hint or "Failed to get insight",
+        )
+    if result.data is None:
+        raise HTTPException(status_code=404, detail="Insight not found")
+    return InsightResponse.from_insight(result.data)
