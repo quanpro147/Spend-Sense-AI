@@ -1,7 +1,65 @@
 [project]
 name = "spend-sense-ai"
 version = "0.1.0"
-description = "Add your description here"
+description = "AI-powered personal expense management with semantic caching"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    # Web framework
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "python-multipart>=0.0.12",
+
+    # Data validation
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+
+    # Vision: OCR
+    "paddlepaddle>=2.6.0",
+    "paddleocr>=2.9.0",
+    "pillow>=11.0.0",
+    "opencv-python-headless>=4.10.0",
+
+    # Vision: Object detection
+    "ultralytics>=8.3.0",
+
+    # Embeddings
+    "sentence-transformers>=3.3.0",
+
+    # Vector store
+    "chromadb>=0.6.0",
+
+    # LLM
+    "google-generativeai>=0.8.0",
+
+    # Utilities
+    "httpx>=0.28.0",
+    "python-dotenv>=1.0.0",
+    "structlog>=24.4.0",
+    "tenacity>=9.0.0",
+    "numpy>=2.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
+    "pytest-cov>=6.0.0",
+    "httpx>=0.28.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--cov=src --cov-report=term-missing --cov-fail-under=80"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
+    "pytest-cov>=6.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
