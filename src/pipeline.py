@@ -18,7 +18,7 @@ from src.cache.vector_store import cache_lookup, cache_store
 from src.core.config import get_settings
 from src.core.tool_result import ToolResult, ToolStatus
 from src.embedding.embedder import embed_text
-from src.llm.gemini_client import generate_insight
+from src.llm.gemini_client import classify_receipt_items, generate_insight
 from src.models.expense import Insight, Receipt
 from src.vision.detector import detect_receipt
 from src.vision.ocr import extract_receipt
@@ -76,13 +76,24 @@ def analyze_receipt_details(image_bytes: bytes) -> dict:
                 "quantity": item.quantity,
                 "unit_price": item.unit_price,
                 "total_price": item.total_price,
+                "category": item.category,
                 "source_token_ids": {},
             }
             for item in receipt.items
         ]
     log.info("pipeline.ocr.done", merchant=receipt.merchant, items=len(receipt.items))
 
-    # 3. Embed canonical text
+    # 3. Classify every detected item name in a single Gemma request. This is
+    # non-fatal because users can still correct categories in the review UI.
+    log.info("pipeline.classify_items.start", items=len(draft_items))
+    classify_result = classify_receipt_items(draft_items)
+    if classify_result.status == ToolStatus.ERROR:
+        log.warning("pipeline.classify_items.error", hint=classify_result.error_hint)
+    elif classify_result.status == ToolStatus.WARNING:
+        log.warning("pipeline.classify_items.warning", hint=classify_result.error_hint)
+    _apply_item_categories(receipt, draft_items, classify_result.data if isinstance(classify_result.data, dict) else {})
+
+    # 4. Embed canonical text
     log.info("pipeline.embed.start")
     embed_result = embed_text(receipt.canonical_text)
     _require_ok(embed_result, "embed")
@@ -95,7 +106,7 @@ def analyze_receipt_details(image_bytes: bytes) -> dict:
         insight = _generate_and_store(receipt, vector, skip_store=True)
         return _details_payload(receipt, insight, fields, draft_items)
 
-    # 4. Cache lookup
+    # 5. Cache lookup
     log.info("pipeline.cache.lookup")
     lookup_result = cache_lookup(vector, str(receipt.id))
 
@@ -109,7 +120,7 @@ def analyze_receipt_details(image_bytes: bytes) -> dict:
         log.info("pipeline.cache.hit", similarity=lookup_result.data.similarity_score)
         return _details_payload(receipt, lookup_result.data, fields, draft_items)
 
-    # 5. Cache miss → generate insight
+    # 6. Cache miss → generate insight
     log.info("pipeline.cache.miss")
     insight = _generate_and_store(receipt, vector)
     return _details_payload(receipt, insight, fields, draft_items)
@@ -122,6 +133,19 @@ def _details_payload(receipt: Receipt, insight: Insight, fields: list[dict], dra
         "fields": fields,
         "draft_items": draft_items,
     }
+
+
+def _apply_item_categories(receipt: Receipt, draft_items: list[dict], categories: dict[str, str]) -> None:
+    draft_category_by_name: dict[str, str] = {}
+    for draft_item in draft_items:
+        category = categories.get(str(draft_item.get("id", ""))) or str(draft_item.get("category", "khac") or "khac")
+        draft_item["category"] = category
+        name = str(draft_item.get("name", "")).strip()
+        if name:
+            draft_category_by_name[name] = category
+
+    for item in receipt.items:
+        item.category = draft_category_by_name.get(item.name, item.category or "khac")
 
 
 def _generate_and_store(receipt: Receipt, vector: list[float], *, skip_store: bool = False) -> Insight:

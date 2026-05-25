@@ -22,6 +22,7 @@ class ReceiptItemInput(BaseModel):
     name: str
     quantity: float = 1.0
     unit_price: float = 0.0
+    category: str = "khac"
 
 
 class TransactionCreateRequest(BaseModel):
@@ -98,6 +99,10 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class GoogleLoginRequest(BaseModel):
+    credential: str = Field(min_length=10)
+
+
 class UserResponse(BaseModel):
     id: UUID
     email: str
@@ -128,6 +133,7 @@ class ReceiptDraftItemResponse(BaseModel):
     quantity: float
     unit_price: float
     total_price: float
+    category: str = "khac"
     source_token_ids: dict[str, str | None] = Field(default_factory=dict)
 
 

@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     # LLM
     gemini_api_key: str = Field(default="", description="Google Gemini API key")
     gemini_model: str = Field(default="gemini-2.5-flash")
+    gemma_model: str = Field(default="gemma-4-31b-it")
+    gemma_timeout_seconds: float = Field(default=3.0, gt=0)
+    google_client_id: str = Field(default="")
 
     # Vector store (ChromaDB)
     chroma_host: str = Field(default="localhost")

@@ -45,6 +45,7 @@ class ReceiptItemRecord(Base):
     quantity: Mapped[float] = mapped_column(Float, default=1.0)
     unit_price: Mapped[float] = mapped_column(Float, default=0.0)
     total_price: Mapped[float] = mapped_column(Float, default=0.0)
+    category: Mapped[str] = mapped_column(String(80), default="khac")
 
     receipt: Mapped[ReceiptRecord] = relationship(back_populates="items")
 

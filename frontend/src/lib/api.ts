@@ -3,9 +3,19 @@ const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_TIMEOUT_MS ?? 15000);
 const API_URLS = ENV_API_URL
   ? [ENV_API_URL]
   : ["http://localhost:8080", "http://127.0.0.1:8080"];
-const TOKEN_KEY = "spendsense_demo_token";
-const DEMO_EMAIL = "demo@spendsense.dev";
-const DEMO_PASSWORD = "demo-password";
+export const TOKEN_KEY = "spendsense_token";
+export const USER_KEY = "spendsense_user";
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  created_at: string;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  user: AuthUser;
+}
 
 export interface AnalyzeReceiptResult {
   insight: {
@@ -40,6 +50,7 @@ export interface ReceiptDraftItem {
   quantity: number;
   unit_price: number;
   total_price: number;
+  category: string;
   source_token_ids: Record<string, string | null>;
 }
 
@@ -76,6 +87,7 @@ export interface CreateTransactionPayload {
     name: string;
     quantity: number;
     unit_price: number;
+    category: string;
   }>;
 }
 
@@ -96,42 +108,35 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-async function loginDemoUser(): Promise<string> {
-  type AuthResponse = { access_token: string };
-  const body = JSON.stringify({ email: DEMO_EMAIL, password: DEMO_PASSWORD });
-
-  try {
-    const registered = await request<AuthResponse>("/auth/register", {
-      method: "POST",
-      body,
-    });
-    return registered.access_token;
-  } catch {
-    const loggedIn = await request<AuthResponse>("/auth/login", {
-      method: "POST",
-      body,
-    });
-    return loggedIn.access_token;
-  }
-}
-
-async function getDemoToken(): Promise<string> {
-  const existing = localStorage.getItem(TOKEN_KEY);
-  if (existing) {
-    const response = await fetchWithFallback("/auth/me", {
-      headers: { Authorization: `Bearer ${existing}` },
-    });
-    if (response.ok) return existing;
-    localStorage.removeItem(TOKEN_KEY);
-  }
-
-  const token = await loginDemoUser();
-  localStorage.setItem(TOKEN_KEY, token);
-  return token;
-}
-
 export async function getHealth(): Promise<{ status: string }> {
   return request<{ status: string }>("/health");
+}
+
+export async function loginWithPassword(email: string, password: string): Promise<AuthResponse> {
+  return request<AuthResponse>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function registerWithPassword(email: string, password: string): Promise<AuthResponse> {
+  return request<AuthResponse>("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function loginWithGoogle(credential: string): Promise<AuthResponse> {
+  return request<AuthResponse>("/auth/google", {
+    method: "POST",
+    body: JSON.stringify({ credential }),
+  });
+}
+
+export async function getCurrentUser(token: string): Promise<AuthUser> {
+  return request<AuthUser>("/auth/me", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
 
 export async function analyzeReceipt(file: File): Promise<AnalyzeReceiptResult> {
@@ -139,7 +144,8 @@ export async function analyzeReceipt(file: File): Promise<AnalyzeReceiptResult> 
 }
 
 export async function createTransaction(payload: CreateTransactionPayload): Promise<unknown> {
-  const token = await getDemoToken();
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (!token) throw new Error("Bạn cần đăng nhập trước khi lưu giao dịch.");
   return request<unknown>("/transactions", {
     method: "POST",
     headers: {

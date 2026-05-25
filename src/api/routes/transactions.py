@@ -36,6 +36,7 @@ async def create_transaction(
                     quantity=item.quantity,
                     unit_price=item.unit_price,
                     total_price=item.quantity * item.unit_price,
+                    category=item.category,
                 )
             )
         receipt_id = receipt.id

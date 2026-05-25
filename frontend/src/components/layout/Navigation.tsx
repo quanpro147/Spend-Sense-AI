@@ -10,9 +10,11 @@ import {
   Bell,
   Sparkles,
   Zap,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AddTransactionModal } from "@/components/AddTransactionModal";
+import { useAuth } from "@/lib/auth";
 
 const navItems = [
   { label: "Tổng Quan", icon: LayoutDashboard, path: "/" },
@@ -77,6 +79,7 @@ export function Sidebar({ onAddTx }: Readonly<{ onAddTx: () => void }>) {
 
 export function TopBar({ onAddTx }: Readonly<{ onAddTx: () => void }>) {
   const { pathname } = useLocation();
+  const { user, logout } = useAuth();
   const currentPage = navItems.find((i) =>
     i.path === "/" ? pathname === "/" : pathname.startsWith(i.path)
   );
@@ -116,11 +119,20 @@ export function TopBar({ onAddTx }: Readonly<{ onAddTx: () => void }>) {
           <Zap className="w-5 h-5 text-stitch-primary-container" />
         </button>
 
-        <img
-          src="https://ui-avatars.com/api/?name=Nguyen+Minh+Tuan&background=5BAAEC&color=fff&size=64"
-          alt="Avatar"
-          className="w-9 h-9 rounded-full border-2 border-stitch-primary-container/40"
-        />
+        <div className="hidden sm:block text-right leading-tight">
+          <div className="text-sm font-semibold text-stitch-on-surface">{user?.email}</div>
+          <button onClick={logout} className="text-xs text-stitch-on-surface-variant hover:text-brand-blue-dark">
+            Đăng xuất
+          </button>
+        </div>
+
+        <button
+          onClick={logout}
+          className="w-9 h-9 rounded-full flex items-center justify-center text-stitch-on-surface-variant hover:bg-stitch-surface-container transition-colors"
+          title="Đăng xuất"
+        >
+          <LogOut className="w-5 h-5" />
+        </button>
       </div>
     </header>
   );

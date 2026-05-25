@@ -1,5 +1,7 @@
 from collections.abc import AsyncIterator
 
+from sqlalchemy import inspect, text
+from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -23,6 +25,20 @@ def _make_engine() -> object:
 
 engine = _make_engine()
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
+
+async def ensure_database() -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await _ensure_lightweight_migrations(conn)
+
+
+async def _ensure_lightweight_migrations(conn: AsyncConnection) -> None:
+    has_item_category = await conn.run_sync(
+        lambda sync_conn: "category" in {column["name"] for column in inspect(sync_conn).get_columns("receipt_items")}
+    )
+    if not has_item_category:
+        await conn.execute(text("ALTER TABLE receipt_items ADD COLUMN category VARCHAR(80) DEFAULT 'khac'"))
 
 
 async def get_db() -> AsyncIterator[AsyncSession]:

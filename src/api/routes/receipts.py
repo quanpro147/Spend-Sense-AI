@@ -59,6 +59,7 @@ async def analyze(
     amount = sum(float(item.get("quantity", 0)) * float(item.get("unit_price", 0)) for item in draft_items)
     if amount <= 0:
         amount = receipt.total_amount
+    suggested_category = _dominant_category(draft_items)
 
     return AnalyzeResponse(
         insight=InsightResponse.from_insight(insight),
@@ -76,7 +77,7 @@ async def analyze(
             type="expense",
             amount=amount,
             currency=receipt.currency,
-            category="khac",
+            category=suggested_category,
             description=receipt.merchant,
             merchant=receipt.merchant,
             transaction_date=receipt.purchase_date,
@@ -84,3 +85,12 @@ async def analyze(
         ),
         detected_fields=[DetectedFieldResponse(**field) for field in fields],
     )
+
+
+def _dominant_category(items: list[dict]) -> str:
+    totals: dict[str, float] = {}
+    for item in items:
+        category = str(item.get("category") or "khac")
+        amount = float(item.get("quantity", 0)) * float(item.get("unit_price", 0))
+        totals[category] = totals.get(category, 0.0) + amount
+    return max(totals, key=totals.get) if totals else "khac"

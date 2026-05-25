@@ -14,8 +14,8 @@ def reconstruct_receipt(fields: list[dict[str, Any]]) -> tuple[Receipt, list[dic
 
     The model detects semantic boxes, but receipt layouts vary. The safest
     automatic pass uses item-name boxes as anchors and attaches the nearest
-    quantity/price boxes either on the same row or below the item before the
-    next item row. The frontend still lets the user drag tokens between fields.
+    price box as the line amount. Many Vietnamese receipts print quantity and
+    final line amount, not unit price, so quantity is kept as 1 for saving.
     """
     merchant = _merchant_from_fields(fields)
     item_fields = sorted(_by_class(fields, "item"), key=_field_position_key)
@@ -37,26 +37,24 @@ def reconstruct_receipt(fields: list[dict[str, Any]]) -> tuple[Receipt, list[dic
             used_prices.add(price["id"])
 
         name = item_field.get("text") or "Unnamed item"
-        qty = _parse_quantity(quantity.get("text", "") if quantity else "") or 1.0
-        unit_price = _parse_money(price.get("text", "") if price else "") or 0.0
-        total_price = qty * unit_price
+        line_amount = _parse_money(price.get("text", "") if price else "") or 0.0
 
         receipt_item = ReceiptItem(
             name=name,
-            quantity=qty,
-            unit_price=unit_price,
-            total_price=total_price,
+            quantity=1.0,
+            unit_price=line_amount,
+            total_price=line_amount,
         )
         draft_item = (
             {
                 "id": str(uuid.uuid4()),
                 "name": name,
-                "quantity": qty,
-                "unit_price": unit_price,
-                "total_price": total_price,
+                "quantity": 1.0,
+                "unit_price": line_amount,
+                "total_price": line_amount,
+                "category": "khac",
                 "source_token_ids": {
                     "name": item_field["id"],
-                    "quantity": quantity["id"] if quantity else None,
                     "unit_price": price["id"] if price else None,
                 },
             }
@@ -65,27 +63,25 @@ def reconstruct_receipt(fields: list[dict[str, Any]]) -> tuple[Receipt, list[dic
 
     orphan_rows = _orphan_value_rows(quantity_fields, price_fields, used_quantities, used_prices)
     for row in orphan_rows:
-        qty = _parse_quantity(row["quantity"].get("text", "") if row.get("quantity") else "") or 1.0
-        unit_price = _parse_money(row["price"].get("text", "") if row.get("price") else "") or 0.0
-        total_price = qty * unit_price
+        line_amount = _parse_money(row["price"].get("text", "") if row.get("price") else "") or 0.0
         name = "Món chưa nhận diện"
         sort_y = _row_sort_y(row)
         receipt_item = ReceiptItem(
             name=name,
-            quantity=qty,
-            unit_price=unit_price,
-            total_price=total_price,
+            quantity=1.0,
+            unit_price=line_amount,
+            total_price=line_amount,
         )
         draft_item = (
             {
                 "id": str(uuid.uuid4()),
                 "name": name,
-                "quantity": qty,
-                "unit_price": unit_price,
-                "total_price": total_price,
+                "quantity": 1.0,
+                "unit_price": line_amount,
+                "total_price": line_amount,
+                "category": "khac",
                 "source_token_ids": {
                     "name": None,
-                    "quantity": row["quantity"]["id"] if row.get("quantity") else None,
                     "unit_price": row["price"]["id"] if row.get("price") else None,
                 },
             }

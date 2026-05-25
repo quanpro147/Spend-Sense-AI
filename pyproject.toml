@@ -23,8 +23,6 @@ dependencies = [
     # Vector store
     "chromadb>=0.6.0",
     "onnxruntime<1.24.0",
-    # LLM
-    "google-generativeai>=0.8.0",
     # Utilities
     "httpx>=0.28.0",
     "python-dotenv>=1.0.0",
@@ -40,6 +38,7 @@ dependencies = [
     "PyJWT>=2.10.0",
     "email-validator>=2.2.0",
     "huggingface-hub>=1.14.0",
+    "google-auth>=2.0.0",
 ]
 
 [project.optional-dependencies]

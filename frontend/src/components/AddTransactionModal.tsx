@@ -41,6 +41,7 @@ const categories = [
 type TxType = "expense" | "income";
 type Step = "form" | "receipt" | "success";
 type CameraState = "idle" | "active" | "captured";
+type PriceMode = "unit" | "line";
 type ReviewField = "name" | "quantity" | "unit_price";
 
 interface ReviewItem {
@@ -48,6 +49,7 @@ interface ReviewItem {
   name: string;
   quantity: number;
   unit_price: number;
+  category: string;
   source_token_ids: Record<ReviewField, string | null>;
 }
 
@@ -83,8 +85,9 @@ function makeReviewItem(item?: Partial<ReceiptDraftItem>): ReviewItem {
   return {
     id: item?.id ?? crypto.randomUUID(),
     name: item?.name ?? "",
-    quantity: Number(item?.quantity ?? 1),
-    unit_price: Number(item?.unit_price ?? 0),
+    quantity: 1,
+    unit_price: Number(item?.total_price ?? item?.unit_price ?? 0),
+    category: item?.category ?? "khac",
     source_token_ids: {
       name: item?.source_token_ids?.name ?? null,
       quantity: item?.source_token_ids?.quantity ?? null,
@@ -111,6 +114,18 @@ function isStoreNameToken(field: DetectedField): boolean {
   return field.class_name.trim().toLowerCase().replace(/[-\s]+/g, "_") === "store_name";
 }
 
+function isQuantityToken(field: DetectedField): boolean {
+  return field.class_name.trim().toLowerCase().replace(/[-\s]+/g, "_") === "quantity";
+}
+
+function dominantCategory(items: ReviewItem[]): string {
+  const totals = new Map<string, number>();
+  items.forEach((item) => {
+    totals.set(item.category, (totals.get(item.category) ?? 0) + item.unit_price);
+  });
+  return Array.from(totals.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "khac";
+}
+
 export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionModalProps>) {
   const [step, setStep] = useState<Step>("form");
   const [txType, setTxType] = useState<TxType>("expense");
@@ -131,6 +146,7 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
   const [draggedTokenId, setDraggedTokenId] = useState<string | null>(null);
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
   const [editingValue, setEditingValue] = useState("");
+  const [priceMode, setPriceMode] = useState<PriceMode>("unit");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -138,8 +154,8 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
   const streamRef = useRef<MediaStream | null>(null);
 
   const computedTotal = useMemo(
-    () => reviewItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0),
-    [reviewItems],
+    () => reviewItems.reduce((sum, item) => sum + (priceMode === "line" ? item.unit_price : item.quantity * item.unit_price), 0),
+    [priceMode, reviewItems],
   );
 
   const assignedTokenIds = useMemo(() => {
@@ -180,6 +196,7 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
     setDraggedTokenId(null);
     setEditingCell(null);
     setEditingValue("");
+    setPriceMode("unit");
     stopCamera();
     onClose();
   }, [onClose, stopCamera]);
@@ -242,11 +259,12 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
       const nextMerchant = suggested?.merchant || receipt?.merchant || "";
 
       setAnalysis(result);
-      setDetectedFields((result.detected_fields ?? []).filter((field) => !isStoreNameToken(field)));
+      setDetectedFields((result.detected_fields ?? []).filter((field) => !isStoreNameToken(field) && !isQuantityToken(field)));
       setReviewItems(nextItems);
+      setPriceMode("unit");
       setAmount(String(nextAmount || ""));
       setItemName(nextItems[0]?.name || nextMerchant || "");
-      setCategory(suggested?.category || "khac");
+      setCategory(suggested?.category || dominantCategory(nextItems));
       setTransactionDate(suggested?.transaction_date || new Date().toISOString().slice(0, 10));
     } catch (error) {
       setApiError(error instanceof Error ? error.message : "Không thể phân tích hóa đơn.");
@@ -301,6 +319,9 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
 
   const addReviewRow = () => setReviewItems((items) => [...items, makeReviewItem()]);
   const removeReviewRow = (rowId: string) => setReviewItems((items) => items.filter((item) => item.id !== rowId));
+  const updateRowCategory = (rowId: string, nextCategory: string) => {
+    setReviewItems((items) => items.map((item) => (item.id === rowId ? { ...item, category: nextCategory } : item)));
+  };
 
   const renderEditableCell = (item: ReviewItem, field: ReviewField) => {
     const isEditing = editingCell?.rowId === item.id && editingCell.field === field;
@@ -348,10 +369,12 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
 
   const handleSave = async () => {
     const total = computedTotal || parseMoney(amount);
-    const itemRows = reviewItems.length
+    const itemRows = txType === "income"
+      ? []
+      : reviewItems.length
       ? reviewItems.filter((item) => item.name.trim())
       : itemName.trim()
-        ? [{ id: crypto.randomUUID(), name: itemName.trim(), quantity: 1, unit_price: total, source_token_ids: { name: null, quantity: null, unit_price: null } }]
+        ? [{ id: crypto.randomUUID(), name: itemName.trim(), quantity: 1, unit_price: total, category, source_token_ids: { name: null, quantity: null, unit_price: null } }]
         : [];
     const transactionName = itemRows.map((item) => item.name).join(", ");
     setIsSaving(true);
@@ -368,8 +391,9 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
         receipt_items: itemRows
           .map((item) => ({
             name: item.name,
-            quantity: item.quantity,
+            quantity: priceMode === "line" ? 1 : item.quantity,
             unit_price: item.unit_price,
+            category: item.category,
           })),
       });
       setAmount(String(total));
@@ -396,7 +420,7 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
             </h2>
             <p className="text-sm text-stitch-on-surface-variant mt-0.5">
               {step === "receipt" && analysis
-                ? "Kéo token vào đúng ô, double-click để sửa. Thành tiền từng món được tính tự động."
+                ? "Kéo token vào đúng ô, double-click để sửa. Có thể đổi giữa đơn giá và thành tiền."
                 : "Nhập thông tin hoặc phân tích hóa đơn bằng backend."}
             </p>
           </div>
@@ -557,7 +581,7 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
                       <input className="stitch-input py-2" type="date" value={transactionDate} onChange={(event) => setTransactionDate(event.target.value)} />
                     </label>
                     <label className="space-y-1">
-                      <span className="text-xs font-semibold text-stitch-on-surface-variant uppercase">Danh mục</span>
+                      <span className="text-xs font-semibold text-stitch-on-surface-variant uppercase">Danh mục giao dịch</span>
                       <select className="stitch-input py-2" value={category} onChange={(event) => setCategory(event.target.value)}>
                         {categories.map((item) => (
                           <option key={item.value} value={item.value}>{item.label}</option>
@@ -566,35 +590,97 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
                     </label>
                   </div>
 
-                  <div className="stitch-card overflow-hidden">
-                    <div className="grid grid-cols-[1.5fr_0.7fr_0.9fr_0.9fr_40px] gap-0 bg-stitch-surface-container px-3 py-2 text-xs font-bold uppercase text-stitch-on-surface-variant">
-                      <span>Tên món</span>
-                      <span>SL</span>
-                      <span>Đơn giá</span>
-                      <span>Thành tiền</span>
-                      <span />
-                    </div>
-                    <div className="divide-y divide-stitch-outline-variant/60">
-                      {reviewItems.map((item) => (
-                        <div key={item.id} className="grid grid-cols-[1.5fr_0.7fr_0.9fr_0.9fr_40px] gap-0 px-3 py-2 items-center text-sm">
-                          {renderEditableCell(item, "name")}
-                          {renderEditableCell(item, "quantity")}
-                          {renderEditableCell(item, "unit_price")}
-                          <span className="font-semibold tabular-nums">{formatCurrency(item.quantity * item.unit_price)}</span>
-                          <button onClick={() => removeReviewRow(item.id)} className="w-8 h-8 rounded-md hover:bg-red-50 text-red-600 flex items-center justify-center">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                  <div className="inline-flex rounded-lg border border-stitch-outline-variant bg-stitch-surface-container p-1 text-sm font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => setPriceMode("unit")}
+                      className={`rounded-md px-3 py-2 transition-colors ${priceMode === "unit" ? "bg-white text-stitch-on-surface shadow-soft" : "text-stitch-on-surface-variant"}`}
+                    >
+                      SL x đơn giá
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPriceMode("line")}
+                      className={`rounded-md px-3 py-2 transition-colors ${priceMode === "line" ? "bg-white text-stitch-on-surface shadow-soft" : "text-stitch-on-surface-variant"}`}
+                    >
+                      Thành tiền
+                    </button>
+                  </div>
+
+                  <div className="stitch-card overflow-x-auto">
+                    <div className={priceMode === "line" ? "min-w-[640px]" : "min-w-[760px]"}>
+                      {priceMode === "line" ? (
+                        <>
+                          <div className="grid grid-cols-[1.45fr_0.9fr_1fr_40px] gap-0 bg-stitch-surface-container px-3 py-2 text-xs font-bold uppercase text-stitch-on-surface-variant">
+                            <span>Tên món</span>
+                            <span>Thành tiền</span>
+                            <span>Danh mục</span>
+                            <span />
+                          </div>
+                          <div className="divide-y divide-stitch-outline-variant/60">
+                            {reviewItems.map((item) => (
+                              <div key={item.id} className="grid grid-cols-[1.45fr_0.9fr_1fr_40px] gap-0 px-3 py-2 items-center text-sm">
+                                {renderEditableCell(item, "name")}
+                                {renderEditableCell(item, "unit_price")}
+                                <select
+                                  className="min-h-10 w-full rounded-md border border-stitch-outline-variant bg-white px-2 py-1 text-sm outline-none focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20"
+                                  value={item.category}
+                                  onChange={(event) => updateRowCategory(item.id, event.target.value)}
+                                >
+                                  {categories.map((categoryOption) => (
+                                    <option key={categoryOption.value} value={categoryOption.value}>{categoryOption.label}</option>
+                                  ))}
+                                </select>
+                                <button onClick={() => removeReviewRow(item.id)} className="w-8 h-8 rounded-md hover:bg-red-50 text-red-600 flex items-center justify-center">
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="grid grid-cols-[1.4fr_0.55fr_0.8fr_0.85fr_1fr_40px] gap-0 bg-stitch-surface-container px-3 py-2 text-xs font-bold uppercase text-stitch-on-surface-variant">
+                            <span>Tên món</span>
+                            <span>SL</span>
+                            <span>Đơn giá</span>
+                            <span>Thành tiền</span>
+                            <span>Danh mục</span>
+                            <span />
+                          </div>
+                          <div className="divide-y divide-stitch-outline-variant/60">
+                            {reviewItems.map((item) => (
+                              <div key={item.id} className="grid grid-cols-[1.4fr_0.55fr_0.8fr_0.85fr_1fr_40px] gap-0 px-3 py-2 items-center text-sm">
+                                {renderEditableCell(item, "name")}
+                                {renderEditableCell(item, "quantity")}
+                                {renderEditableCell(item, "unit_price")}
+                                <span className="font-semibold tabular-nums">{formatCurrency(item.quantity * item.unit_price)}</span>
+                                <select
+                                  className="min-h-10 w-full rounded-md border border-stitch-outline-variant bg-white px-2 py-1 text-sm outline-none focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20"
+                                  value={item.category}
+                                  onChange={(event) => updateRowCategory(item.id, event.target.value)}
+                                >
+                                  {categories.map((categoryOption) => (
+                                    <option key={categoryOption.value} value={categoryOption.value}>{categoryOption.label}</option>
+                                  ))}
+                                </select>
+                                <button onClick={() => removeReviewRow(item.id)} className="w-8 h-8 rounded-md hover:bg-red-50 text-red-600 flex items-center justify-center">
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                      <div className="flex items-center justify-between px-3 py-3 bg-stitch-surface-container-low">
+                        <button onClick={addReviewRow} className="btn-outline text-sm flex items-center gap-2 py-2">
+                          <Plus className="w-4 h-4" />
+                          Thêm dòng
+                        </button>
+                        <div className="text-right">
+                          <div className="text-xs uppercase font-semibold text-stitch-on-surface-variant">Tổng tiền từ bảng</div>
+                          <div className="font-heading text-xl font-bold text-stitch-on-surface">{formatCurrency(computedTotal)}</div>
                         </div>
-                      ))}
-                    </div>
-                    <div className="flex items-center justify-between px-3 py-3 bg-stitch-surface-container-low">
-                      <button onClick={addReviewRow} className="btn-outline text-sm flex items-center gap-2 py-2">
-                        <Plus className="w-4 h-4" />
-                        Thêm dòng
-                      </button>
-                      <div className="text-right">
-                        <div className="text-xs uppercase font-semibold text-stitch-on-surface-variant">Tổng tiền từ bảng</div>
-                        <div className="font-heading text-xl font-bold text-stitch-on-surface">{formatCurrency(computedTotal)}</div>
                       </div>
                     </div>
                   </div>
@@ -640,6 +726,7 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
                 <button
                   onClick={() => {
                     setAmount(String(computedTotal));
+                    setCategory(dominantCategory(reviewItems));
                     setStep("form");
                   }}
                   className="flex-1 btn-primary"
@@ -682,19 +769,25 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
                 />
                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-stitch-on-surface-variant font-medium">VND</span>
               </div>
-              {reviewItems.length > 0 && <p className="text-xs text-stitch-on-surface-variant">Số tiền được tính từ bảng item và sẽ cập nhật khi bạn sửa SL/đơn giá.</p>}
+              {reviewItems.length > 0 && (
+                <p className="text-xs text-stitch-on-surface-variant">
+                  Số tiền được tính từ bảng item và sẽ cập nhật theo chế độ đơn giá hoặc thành tiền bạn chọn.
+                </p>
+              )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <label className="space-y-1.5">
-                <span className="text-sm font-semibold text-stitch-on-surface-variant uppercase tracking-wide">Tên món hàng</span>
-                <input
-                  value={itemName}
-                  onChange={(event) => setItemName(event.target.value)}
-                  className="stitch-input"
-                  placeholder="Ví dụ: Bách Hóa Xanh, cơm trưa..."
-                />
-              </label>
+            <div className={`grid grid-cols-1 ${txType === "expense" ? "md:grid-cols-2" : ""} gap-3`}>
+              {txType === "expense" && (
+                <label className="space-y-1.5">
+                  <span className="text-sm font-semibold text-stitch-on-surface-variant uppercase tracking-wide">Tên món hàng</span>
+                  <input
+                    value={itemName}
+                    onChange={(event) => setItemName(event.target.value)}
+                    className="stitch-input"
+                    placeholder="Ví dụ: Bách Hóa Xanh, cơm trưa..."
+                  />
+                </label>
+              )}
               <label className="space-y-1.5">
                 <span className="text-sm font-semibold text-stitch-on-surface-variant uppercase tracking-wide">Ngày</span>
                 <input type="date" value={transactionDate} onChange={(event) => setTransactionDate(event.target.value)} className="stitch-input" />
@@ -713,19 +806,21 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
               </div>
             </div>
 
-            <button
-              onClick={() => setStep("receipt")}
-              className="w-full flex items-center gap-3 p-4 rounded-lg border border-dashed border-stitch-outline-variant text-left hover:border-brand-blue hover:bg-blue-50/40 transition-all"
-            >
-              <div className="w-10 h-10 rounded-lg bg-stitch-surface-container flex items-center justify-center flex-shrink-0">
-                {receiptPreview ? <img src={receiptPreview} alt="" className="w-10 h-10 rounded-lg object-cover" /> : <Camera className="w-5 h-5 text-stitch-on-surface-variant" />}
-              </div>
-              <div className="flex-1">
-                <p className="text-base font-semibold text-stitch-on-surface">{receiptPreview ? "Hóa đơn đã sẵn sàng" : "Thêm hóa đơn / chụp ảnh"}</p>
-                <p className="text-sm text-stitch-on-surface-variant">{analysis ? "Nhấn để kéo thả và chỉnh sửa các dòng hàng" : "YOLO detect vùng chữ, VietOCR đọc text, bạn review trước khi lưu"}</p>
-              </div>
-              <Upload className="w-4 h-4 text-stitch-on-surface-variant" />
-            </button>
+            {txType === "expense" && (
+              <button
+                onClick={() => setStep("receipt")}
+                className="w-full flex items-center gap-3 p-4 rounded-lg border border-dashed border-stitch-outline-variant text-left hover:border-brand-blue hover:bg-blue-50/40 transition-all"
+              >
+                <div className="w-10 h-10 rounded-lg bg-stitch-surface-container flex items-center justify-center flex-shrink-0">
+                  {receiptPreview ? <img src={receiptPreview} alt="" className="w-10 h-10 rounded-lg object-cover" /> : <Camera className="w-5 h-5 text-stitch-on-surface-variant" />}
+                </div>
+                <div className="flex-1">
+                  <p className="text-base font-semibold text-stitch-on-surface">{receiptPreview ? "Hóa đơn đã sẵn sàng" : "Thêm hóa đơn / chụp ảnh"}</p>
+                  <p className="text-sm text-stitch-on-surface-variant">{analysis ? "Nhấn để kéo thả và chỉnh sửa các dòng hàng" : "YOLO detect vùng chữ, VietOCR đọc text, bạn review trước khi lưu"}</p>
+                </div>
+                <Upload className="w-4 h-4 text-stitch-on-surface-variant" />
+              </button>
+            )}
 
             {apiError && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{apiError}</div>}
 

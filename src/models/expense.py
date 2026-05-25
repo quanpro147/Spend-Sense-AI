@@ -12,6 +12,7 @@ class ReceiptItem(BaseModel):
     quantity: float = 1.0
     unit_price: float
     total_price: float
+    category: str = "khac"
 
 
 class Receipt(BaseModel):
@@ -28,7 +29,7 @@ class Receipt(BaseModel):
         """Deterministic text representation used for embedding."""
         lines = [f"{self.merchant} {self.purchase_date}"]
         for item in self.items:
-            lines.append(f"{item.name} {item.total_price}")
+            lines.append(f"{item.name} {item.category} {item.total_price}")
         lines.append(f"total {self.total_amount} {self.currency}")
         return " | ".join(lines)
 
