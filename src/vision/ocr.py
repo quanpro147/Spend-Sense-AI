@@ -1,7 +1,5 @@
 """
-OCR extractor — PaddleOCR stub.
-
-Replace _run_ocr() body with real PaddleOCR call when ready.
+OCR extractor — VietOCR (vgg_transformer) for both field-level and full-image paths.
 """
 
 from __future__ import annotations
@@ -52,13 +50,12 @@ def extract_receipt(image_bytes: bytes, detections: list[dict[str, Any]] | None 
     try:
         raw_text, items, merchant, purchase_date, total = _run_ocr(image_bytes)
     except NotImplementedError:
-        # Stub: return a placeholder receipt so the pipeline can continue
         receipt = _stub_receipt()
         return ToolResult.warning(
             summary="OCR not implemented — returning stub receipt",
             data=receipt,
             next_actions=["Embed receipt text", "Replace stub with real OCR output"],
-            error_hint="PaddleOCR not loaded. Set up PaddleOCR to enable real extraction.",
+            error_hint="VietOCR not loaded. Install vietocr to enable real extraction.",
         )
     except Exception as exc:
         return ToolResult.error(
@@ -83,8 +80,77 @@ def extract_receipt(image_bytes: bytes, detections: list[dict[str, Any]] | None 
 
 
 def _run_ocr(image_bytes: bytes) -> tuple[str, list[ReceiptItem], str, date, float]:
-    """Plug real PaddleOCR inference here."""
-    raise NotImplementedError
+    """
+    Full-image OCR using VietOCR.
+
+    Splits the receipt into horizontal text bands via pixel projection,
+    runs VietOCR on each band, then parses merchant and total from the lines.
+    """
+    import numpy as np
+    from PIL import Image
+
+    predictor = _vietocr_predictor()
+    image = Image.open(BytesIO(image_bytes)).convert("RGB")
+
+    bands = _find_text_bands(np.array(image.convert("L")), image.height)
+
+    lines: list[str] = []
+    for top, bottom in bands:
+        crop = image.crop((0, top, image.width, bottom))
+        try:
+            text = str(predictor.predict(crop)).strip()
+            if text:
+                lines.append(text)
+        except Exception:
+            pass
+
+    if not lines:
+        raise RuntimeError("VietOCR returned no text from receipt image")
+
+    raw_text = "\n".join(lines)
+    merchant = lines[0]
+    purchase_date = date.today()
+    total_amount = _parse_total(lines)
+
+    return raw_text, [], merchant, purchase_date, total_amount
+
+
+def _find_text_bands(gray: "np.ndarray", height: int) -> list[tuple[int, int]]:
+    """Return (top, bottom) pixel ranges for each horizontal text band."""
+    row_min = gray.min(axis=1)
+    text_rows = row_min < 200
+
+    bands: list[tuple[int, int]] = []
+    in_band = False
+    start = 0
+    padding = 3
+
+    for i, has_text in enumerate(text_rows):
+        if has_text and not in_band:
+            start = max(0, i - padding)
+            in_band = True
+        elif not has_text and in_band:
+            end = min(height, i + padding)
+            if end - start > 5:
+                bands.append((start, end))
+            in_band = False
+
+    if in_band:
+        bands.append((start, height))
+
+    return bands
+
+
+def _parse_total(lines: list[str]) -> float:
+    """Return the last line whose digit run is at least 4 chars long."""
+    for line in reversed(lines):
+        digits = "".join(c for c in line if c.isdigit())
+        if len(digits) >= 4:
+            try:
+                return float(digits)
+            except ValueError:
+                pass
+    return 0.0
 
 
 def _ocr_detected_fields(image_bytes: bytes, detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -141,6 +207,12 @@ def _crop_detection(image_bytes: bytes, detection: dict[str, Any]):
 
 @lru_cache
 def _vietocr_predictor():
+    import PIL.Image
+
+    # VietOCR uses Image.ANTIALIAS which was removed in Pillow 10; patch it.
+    if not hasattr(PIL.Image, "ANTIALIAS"):
+        PIL.Image.ANTIALIAS = PIL.Image.LANCZOS  # type: ignore[attr-defined]
+
     from vietocr.tool.config import Cfg
     from vietocr.tool.predictor import Predictor
 

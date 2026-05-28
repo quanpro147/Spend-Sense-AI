@@ -15,7 +15,7 @@ dependencies = [
     # Vision: OCR
     "pillow>=10.4.0",
     "opencv-python-headless>=4.10.0",
-    # vietocr pinned to pillow==10.2.0 — incompatible with Python 3.13; add back when AI Engineer integrates OCR
+    "vietocr>=0.3.7",
     # Vision: Object detection
     "ultralytics>=8.3.0",
     # Embeddings
