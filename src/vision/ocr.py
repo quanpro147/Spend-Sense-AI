@@ -420,12 +420,16 @@ def _has_useful_fields(fields: list[dict[str, Any]]) -> bool:
 
 
 def _ocr_detected_fields(image_bytes: bytes, detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    from PIL import Image
+
+    image = Image.open(BytesIO(image_bytes)).convert("RGB")
+    predictor = _vietocr_predictor()
     fields: list[dict[str, Any]] = []
     for detection in detections:
         class_name = _normalize_class_name(str(detection.get("class_name", "field")))
         if _is_store_name(class_name):
             continue
-        text = _read_box_text(image_bytes, detection)
+        text = _read_box_text(predictor, image, detection)
         fields.append(
             {
                 "id": str(detection.get("id") or detection.get("detection_id") or ""),
@@ -445,19 +449,15 @@ def _is_store_name(class_name: str) -> bool:
     return _normalize_class_name(class_name) == "store_name"
 
 
-def _read_box_text(image_bytes: bytes, detection: dict[str, Any]) -> str:
+def _read_box_text(predictor: Any, image: Any, detection: dict[str, Any]) -> str:
     try:
-        predictor = _vietocr_predictor()
-        image = _crop_detection(image_bytes, detection)
-        return str(predictor.predict(image)).strip()
+        crop = _crop_detection(image, detection)
+        return str(predictor.predict(crop)).strip()
     except Exception:
         return _fallback_text(str(detection.get("class_name", "")))
 
 
-def _crop_detection(image_bytes: bytes, detection: dict[str, Any]):
-    from PIL import Image
-
-    image = Image.open(BytesIO(image_bytes)).convert("RGB")
+def _crop_detection(image: Any, detection: dict[str, Any]):
     padding = 4
     x = float(detection.get("x", 0))
     y = float(detection.get("y", 0))
@@ -484,6 +484,11 @@ def _vietocr_predictor():
     config = Cfg.load_config_from_name("vgg_transformer")
     config["device"] = "cpu"
     return Predictor(config)
+
+
+def warm_up_ocr() -> None:
+    """Load VietOCR weights once so the first OCR request avoids model init."""
+    _vietocr_predictor()
 
 
 def _fallback_text(class_name: str) -> str:

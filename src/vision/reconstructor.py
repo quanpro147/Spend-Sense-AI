@@ -13,9 +13,9 @@ def reconstruct_receipt(fields: list[dict[str, Any]]) -> tuple[Receipt, list[dic
     Build a receipt draft from OCR fields detected by YOLO.
 
     The model detects semantic boxes, but receipt layouts vary. The safest
-    automatic pass uses item-name boxes as anchors and attaches the nearest
-    price box as the line amount. Many Vietnamese receipts print quantity and
-    final line amount, not unit price, so quantity is kept as 1 for saving.
+    automatic pass uses item-name boxes as anchors and attaches nearby quantity
+    and price boxes on the same receipt row. Quantity may appear before or
+    after the item text; prices are usually to the right.
     """
     merchant = _merchant_from_fields(fields)
     item_fields = sorted(_by_class(fields, "item"), key=_field_position_key)
@@ -28,26 +28,30 @@ def reconstruct_receipt(fields: list[dict[str, Any]]) -> tuple[Receipt, list[dic
 
     for index, item_field in enumerate(item_fields):
         next_item_y = item_fields[index + 1]["y"] if index + 1 < len(item_fields) else None
-        quantity = _best_match(item_field, quantity_fields, used_quantities, next_item_y)
-        price = _best_match(item_field, price_fields, used_prices, next_item_y, want_discount=False)
+        quantity = _best_match(item_field, quantity_fields, used_quantities, next_item_y, allow_left=True)
+        quantity_value = _quantity_from_field(quantity)
+        price, line_total = _best_price_matches(item_field, price_fields, used_prices, next_item_y)
         discount = _best_match(item_field, price_fields, used_prices, next_item_y, want_discount=True)
 
         if quantity:
             used_quantities.add(quantity["id"])
         if price:
             used_prices.add(price["id"])
+        if line_total:
+            used_prices.add(line_total["id"])
         if discount:
             used_prices.add(discount["id"])
 
         name = item_field.get("text") or "Unnamed item"
-        line_amount = _parse_money(price.get("text", "") if price else "") or 0.0
+        unit_price = _parse_money(price.get("text", "") if price else "") or 0.0
+        gross_total = _parse_money(line_total.get("text", "") if line_total else "") or (quantity_value * unit_price)
         discount_amount = _parse_money(discount.get("text", "") if discount else "") or 0.0
-        total_amount = max(line_amount - discount_amount, 0.0)
+        total_amount = max(gross_total - discount_amount, 0.0)
 
         receipt_item = ReceiptItem(
             name=name,
-            quantity=1.0,
-            unit_price=line_amount,
+            quantity=quantity_value,
+            unit_price=unit_price,
             discount=discount_amount,
             total_price=total_amount,
         )
@@ -55,8 +59,8 @@ def reconstruct_receipt(fields: list[dict[str, Any]]) -> tuple[Receipt, list[dic
             {
                 "id": str(uuid.uuid4()),
                 "name": name,
-                "quantity": 1.0,
-                "unit_price": line_amount,
+                "quantity": quantity_value,
+                "unit_price": unit_price,
                 "discount": discount_amount,
                 "total_price": total_amount,
                 "category": "khac",
@@ -72,24 +76,26 @@ def reconstruct_receipt(fields: list[dict[str, Any]]) -> tuple[Receipt, list[dic
 
     orphan_rows = _orphan_value_rows(quantity_fields, price_fields, used_quantities, used_prices)
     for row in orphan_rows:
-        line_amount = _parse_money(row["price"].get("text", "") if row.get("price") else "") or 0.0
+        quantity_value = _quantity_from_field(row.get("quantity"))
+        unit_price = _parse_money(row["price"].get("text", "") if row.get("price") else "") or 0.0
+        total_amount = quantity_value * unit_price
         name = "Món chưa nhận diện"
         sort_y = _row_sort_y(row)
         receipt_item = ReceiptItem(
             name=name,
-            quantity=1.0,
-            unit_price=line_amount,
+            quantity=quantity_value,
+            unit_price=unit_price,
             discount=0.0,
-            total_price=line_amount,
+            total_price=total_amount,
         )
         draft_item = (
             {
                 "id": str(uuid.uuid4()),
                 "name": name,
-                "quantity": 1.0,
-                "unit_price": line_amount,
+                "quantity": quantity_value,
+                "unit_price": unit_price,
                 "discount": 0.0,
-                "total_price": line_amount,
+                "total_price": total_amount,
                 "category": "khac",
                 "source_token_ids": {
                     "name": None,
@@ -150,6 +156,7 @@ def _best_match(
     next_item_y: float | None,
     *,
     want_discount: bool | None = None,
+    allow_left: bool = False,
 ) -> dict[str, Any] | None:
     valid: list[tuple[float, dict[str, Any]]] = []
     item_y = float(item["y"])
@@ -173,13 +180,47 @@ def _best_match(
             continue
 
         y_distance = abs(candidate_y - item_y)
-        x_penalty = 0 if float(candidate.get("x", 0)) > float(item.get("x", 0)) else 25
+        x_penalty = 0 if allow_left or float(candidate.get("x", 0)) > float(item.get("x", 0)) else 25
         discount_penalty = 0 if want_discount and candidate_y >= item_y else 12
         valid.append((y_distance + x_penalty + discount_penalty, candidate))
 
     if not valid:
         return None
     return min(valid, key=lambda pair: pair[0])[1]
+
+
+def _best_price_matches(
+    item: dict[str, Any],
+    price_fields: list[dict[str, Any]],
+    used: set[str],
+    next_item_y: float | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    row_prices = [
+        price
+        for price in price_fields
+        if price["id"] not in used
+        and not _is_discount_field(price)
+        and _is_same_item_band(item, price, next_item_y)
+        and float(price.get("x", 0)) > float(item.get("x", 0))
+    ]
+    if not row_prices:
+        return None, None
+
+    row_prices = sorted(row_prices, key=lambda field: (float(field.get("x", 0)), float(field.get("y", 0))))
+    unit_price = row_prices[0]
+    line_total = row_prices[-1] if row_prices[-1]["id"] != unit_price["id"] else None
+    return unit_price, line_total
+
+
+def _is_same_item_band(item: dict[str, Any], candidate: dict[str, Any], next_item_y: float | None) -> bool:
+    item_y = float(item["y"])
+    item_height = float(item.get("height", 24))
+    threshold = max(item_height * 1.7, 34)
+    same_line_tolerance = max(6.0, item_height * 0.35)
+    lower_bound = item_y - same_line_tolerance
+    upper_bound = (next_item_y - max(6, item_height * 0.25)) if next_item_y else item_y + threshold * 2.4
+    candidate_y = float(candidate["y"])
+    return lower_bound <= candidate_y <= upper_bound
 
 
 def _orphan_value_rows(
@@ -240,6 +281,13 @@ def _parse_quantity(text: str) -> float:
         return float(cleaned) if cleaned else 0.0
     except ValueError:
         return 0.0
+
+
+def _quantity_from_field(field: dict[str, Any] | None) -> float:
+    if not field:
+        return 1.0
+    quantity = _parse_quantity(str(field.get("text", "")))
+    return quantity if quantity > 0 else 1.0
 
 
 def _normalize_class_name(class_name: str) -> str:

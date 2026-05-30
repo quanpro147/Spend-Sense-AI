@@ -95,6 +95,22 @@ def detect_receipt(image_bytes: bytes) -> ToolResult:
     )
 
 
+def warm_up_detector() -> dict[str, Any]:
+    """Load YOLO weights once so the first receipt request avoids model init."""
+    cfg = get_settings()
+    model_path = _resolve_model_path(
+        cfg.yolo_model_path,
+        cfg.yolo_model_repo,
+        cfg.yolo_model_filename,
+        cfg.yolo_model_revision,
+        cfg.hf_token,
+    )
+    if not model_path:
+        raise NotImplementedError("YOLO model is not configured")
+    _load_yolo(model_path)
+    return {"model_path": model_path}
+
+
 def _run_model(image_bytes: bytes) -> tuple[list[dict], bytes, dict[str, Any]]:
     cfg = get_settings()
     model_path = _resolve_model_path(
@@ -150,6 +166,8 @@ def _best_prediction(model, candidates: list[_ImageCandidate], confidence: float
             best_image = candidate.image
             best_detections = detections
             best_score = score
+        if _is_good_enough_candidate(detections):
+            break
 
     return best_detections, best_image, best_name
 
@@ -192,6 +210,14 @@ def _detection_score(detections: list[dict]) -> int:
     classes = {str(detection.get("class_name", "")) for detection in detections}
     useful = sum(1 for detection in detections if detection.get("class_name") in {"item", "price", "quantity"})
     return useful * 10 + len(classes)
+
+
+def _is_good_enough_candidate(detections: list[dict]) -> bool:
+    counts = _class_counts(detections)
+    item_count = counts.get("item", 0)
+    price_count = counts.get("price", 0)
+    useful_count = item_count + price_count + counts.get("quantity", 0)
+    return item_count >= 2 and price_count >= 2 and useful_count >= 4
 
 
 def _normalize_class_name(class_name: str) -> str:
