@@ -42,7 +42,7 @@ SpendSense AI là nền tảng quản lý tài chính cá nhân thông minh vớ
 ### 1.4 Tài liệu tham khảo
 - IEEE 1058-1998: Software Project Management Plans
 - OWASP AI Security & Privacy Guide
-- Gemini 2.5 Flash & PaddleOCR Documentation
+- Gemini 2.5 Flash & VietOCR Documentation
 - Facebook Prophet: Time Series Forecasting Library
 
 ---
@@ -88,7 +88,7 @@ SpendSense AI là nền tảng quản lý tài chính cá nhân thông minh vớ
 
 | Rủi ro | Mức độ ảnh hưởng | Xác suất | Biện pháp giảm thiểu |
 |--------|-----------------|----------|---------------------|
-| OCR sai định dạng hóa đơn không chuẩn | 🔴 Cao | 🟡 Trung bình | PaddleOCR + regex post-processing + UI cho phép người dùng chỉnh sửa |
+| OCR sai định dạng hóa đơn không chuẩn | 🔴 Cao | 🟡 Trung bình | VietOCR + regex post-processing + UI cho phép người dùng chỉnh sửa |
 | Chi phí LLM token vượt ngân sách | 🔴 Cao | 🔴 Cao | Semantic Cache (target hit rate >70%), Prompt compression, fallback rule-based |
 | AI hallucination trong khuyến nghị tài chính | ⚫ Nghiêm trọng | 🟡 Trung bình | Guardrails + factual grounding qua Vector DB + disclaimer UI rõ ràng |
 | Mô hình dự báo bị drift / kém chính xác | 🟡 Trung bình | 🟡 Trung bình | Retrain hàng tháng, monitor MAE/RMSE, fallback về moving average |
@@ -110,7 +110,7 @@ SpendSense AI là nền tảng quản lý tài chính cá nhân thông minh vớ
 
 
 1. **Input Layer:** Images, PDFs, manual entry, bank CSV
-2. **Processing Layer:** YOLOv11 → PaddleOCR → Data Normalization
+2. **Processing Layer:** YOLOv11 → VietOCR → Data Normalization
 3. **Intelligence Layer:** 
    - Vector DB (ChromaDB) + Semantic Cache
    - Financial Engine (Cash flow, Savings rate, MPT allocation)
@@ -131,7 +131,7 @@ SpendSense AI là nền tảng quản lý tài chính cá nhân thông minh vớ
 | `AIReports` | id, user_id, period, metrics_json, narrative, generated_at, status |
 
 ### 4.3 Component Design
-* **OCR Module:** Image → YOLO crop → PaddleOCR → JSON normalization → Validation rules
+* **OCR Module:** Image → YOLO crop → VietOCR → JSON normalization → Validation rules
 * **Financial Engine:** Calculates `Net Cash Flow`, `Savings Rate`, triggers investment alerts
 * **Recommendation Engine:** MPT-based allocation → LLM explains rationale → Cached for 24h
 * **API Layer:** Rate limiting, JWT auth, cost tracking headers, async task IDs
@@ -142,7 +142,7 @@ Celery Beat, Recharts, Gemini, PDFKit
 | Layer | Stack |
 |-------|-------|
 | Backend | Python 3.10+, FastAPI, SQLAlchemy, Pydantic |
-| AI/ML | PaddleOCR, YOLOv11, Gemini 2.5 Flash, Sentence Transformers, Prophet, Scikit-learn |
+| AI/ML | VietOCR, YOLOv11, Gemini 2.5 Flash, Sentence Transformers, Prophet, Scikit-learn |
 | DB & Cache | PostgreSQL, ChromaDB, Redis |
 | Queue & Async | Celery, RabbitMQ/Redis |
 | Frontend | ReactJS, TailwindCSS, Recharts, Axios |

@@ -63,19 +63,11 @@ def extract_receipt(image_bytes: bytes, detections: list[dict[str, Any]] | None 
 
     try:
         receipt, fields, draft_items = _extract_full_image_receipt(image_bytes)
-    except NotImplementedError:
-        receipt = _stub_receipt()
-        return ToolResult.warning(
-            summary="OCR not implemented — returning stub receipt",
-            data=receipt,
-            next_actions=["Embed receipt text", "Replace stub with real OCR output"],
-            error_hint="VietOCR not loaded. Install vietocr to enable real extraction.",
-        )
     except Exception as exc:
         return ToolResult.error(
             summary="OCR extraction failed",
             error_hint=f"{type(exc).__name__}: {exc}",
-            next_actions=["Check image quality", "Retry with enhanced contrast"],
+            next_actions=["Check image quality", "Verify VietOCR is installed", "Retry with enhanced contrast"],
         )
 
     result = ToolResult.success(
@@ -515,13 +507,3 @@ def _normalize_class_name(class_name: str) -> str:
     if normalized in {"quantity", "qty", "sl", "so_luong"}:
         return "quantity"
     return normalized
-
-
-def _stub_receipt() -> Receipt:
-    return Receipt(
-        merchant="Unknown Merchant",
-        purchase_date=date.today(),
-        items=[ReceiptItem(name="Item A", unit_price=10000, total_price=10000)],
-        total_amount=10000,
-        raw_text="[stub]",
-    )

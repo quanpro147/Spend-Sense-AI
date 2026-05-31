@@ -5,7 +5,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.routes import auth, feedback, insights, receipts, transactions
+from src.api.routes import auth, feedback, goals, insights, preferences, receipts, transactions, investment
 from src.core.config import get_settings
 from src.core.logging import configure_logging
 
@@ -38,6 +38,14 @@ def _warm_up_models() -> None:
     except Exception as exc:
         _log.warning("VietOCR warm-up skipped: %s", exc)
 
+    try:
+        from src.embedding.embedder import warm_up_embedder
+
+        metadata = warm_up_embedder()
+        _log.info("Embedding model warmed up.", extra=metadata)
+    except Exception as exc:
+        _log.warning("Embedding model warm-up skipped: %s", exc)
+
 
 def create_app() -> FastAPI:
     cfg = get_settings()
@@ -62,6 +70,9 @@ def create_app() -> FastAPI:
     app.include_router(transactions.router)
     app.include_router(feedback.router)
     app.include_router(insights.router)
+    app.include_router(investment.router)
+    app.include_router(goals.router)
+    app.include_router(preferences.router)
 
     return app
 

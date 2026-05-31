@@ -1,12 +1,21 @@
 """
-Text embedder — sentence-transformers stub.
+Text embedder — sentence-transformers (all-MiniLM-L6-v2 by default).
 
-Replace _load_model() / _encode() with real model when ready.
+The real model is loaded lazily and cached. If the model cannot be loaded
+(e.g. weights not downloaded / offline), embed_text() degrades gracefully to a
+deterministic stub vector so the receipt pipeline never hard-fails.
 """
 
 from __future__ import annotations
 
+from functools import lru_cache
+
+import structlog
+
+from src.core.config import get_settings
 from src.core.tool_result import ToolResult
+
+log = structlog.get_logger()
 
 _STUB_DIM = 384  # all-MiniLM-L6-v2 output dimension
 
@@ -30,13 +39,13 @@ def embed_text(text: str) -> ToolResult:
 
     try:
         vector = _encode(text)
-    except NotImplementedError:
+    except _ModelUnavailable as exc:
         vector = _stub_vector(text)
         return ToolResult.warning(
             summary="Embedding model not loaded — using stub vector",
             data=vector,
             next_actions=["Look up cache with stub vector", "Load real model for production"],
-            error_hint="sentence-transformers not initialised. Set EMBEDDING_MODEL in .env.",
+            error_hint=f"sentence-transformers unavailable: {exc}. Set EMBEDDING_MODEL in .env.",
         )
     except Exception as exc:
         return ToolResult.error(
@@ -52,9 +61,41 @@ def embed_text(text: str) -> ToolResult:
     )
 
 
+class _ModelUnavailable(RuntimeError):
+    """Raised when the sentence-transformers model cannot be loaded."""
+
+
+@lru_cache(maxsize=1)
+def _load_model():
+    """Load and cache the sentence-transformers model (CPU)."""
+    try:
+        from sentence_transformers import SentenceTransformer
+    except Exception as exc:  # ImportError or transitive dependency failure
+        raise _ModelUnavailable(f"sentence-transformers not importable: {exc}") from exc
+
+    model_name = get_settings().embedding_model
+    try:
+        return SentenceTransformer(model_name, device="cpu")
+    except Exception as exc:  # download / weight loading failure
+        raise _ModelUnavailable(f"could not load '{model_name}': {exc}") from exc
+
+
 def _encode(text: str) -> list[float]:
-    """Plug real sentence-transformers encode() here."""
-    raise NotImplementedError
+    """Encode text with the real model into a normalized float vector.
+
+    Vectors are L2-normalized so cosine similarity equals the dot product,
+    matching the semantic-cache similarity_threshold contract.
+    """
+    model = _load_model()
+    vector = model.encode(text, normalize_embeddings=True)
+    return [float(value) for value in vector.tolist()]
+
+
+def warm_up_embedder() -> dict[str, object]:
+    """Load embedding weights once so the first cache lookup avoids model init."""
+    model = _load_model()
+    dimension = int(getattr(model, "get_sentence_embedding_dimension", lambda: _STUB_DIM)())
+    return {"embedding_model": get_settings().embedding_model, "dimension": dimension}
 
 
 def _stub_vector(text: str) -> list[float]:

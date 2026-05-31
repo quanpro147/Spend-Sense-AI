@@ -3,8 +3,16 @@ import {
   PieChart, Pie, Cell, Legend, LineChart, Line,
 } from "recharts";
 import { formatCurrency } from "@/lib/utils";
-import { expenseByCategory, weeklyExpense, monthlyTrend, recentTransactions } from "@/data/mockData";
 import { Filter } from "lucide-react";
+import { listTransactions } from "@/lib/api";
+import { useApiData } from "@/hooks/useApiData";
+import {
+  deriveExpenseByCategory,
+  deriveMonthlyTrend,
+  deriveWalletSummary,
+  deriveWeeklyExpense,
+  toRecentTransactions,
+} from "@/lib/derive";
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload?.length) {
@@ -19,6 +27,26 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export function AnalyticsPage() {
+  const { data: transactions, loading, error, reload } = useApiData(() => listTransactions(), []);
+
+  if (loading) {
+    return <div className="py-20 text-center text-stitch-on-surface-variant">Đang tải dữ liệu phân tích…</div>;
+  }
+  if (error) {
+    return (
+      <div className="py-20 text-center space-y-3">
+        <p className="text-danger">{error}</p>
+        <button onClick={reload} className="btn-outline">Thử lại</button>
+      </div>
+    );
+  }
+
+  const txns = transactions ?? [];
+  const expenseByCategory = deriveExpenseByCategory(txns);
+  const weeklyExpense = deriveWeeklyExpense(txns);
+  const monthlyTrend = deriveMonthlyTrend(txns);
+  const recentTransactions = toRecentTransactions(txns, txns.length);
+  const summary = deriveWalletSummary(txns);
   const totalExpense = expenseByCategory.reduce((s, c) => s + c.value, 0);
 
   return (
@@ -27,7 +55,7 @@ export function AnalyticsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="font-heading text-h2-kpi text-stitch-on-surface">Phân Tích Chi Tiêu</h1>
-          <p className="text-body-lg text-stitch-on-surface-variant mt-1">Tháng 5 · 2026</p>
+          <p className="text-body-lg text-stitch-on-surface-variant mt-1">Dựa trên giao dịch thực của bạn</p>
         </div>
         <button className="flex items-center gap-2 border border-stitch-outline-variant px-4 py-2.5 rounded-lg text-base font-medium text-stitch-on-surface hover:bg-stitch-surface-container transition-colors">
           <Filter className="w-4 h-4" />
@@ -35,12 +63,18 @@ export function AnalyticsPage() {
         </button>
       </div>
 
+      {txns.length === 0 && (
+        <div className="stitch-card p-lg text-center text-stitch-on-surface-variant">
+          Chưa có giao dịch nào. Hãy thêm giao dịch hoặc tải lên hóa đơn để xem phân tích.
+        </div>
+      )}
+
       {/* Summary Cards */}
       <section className="grid grid-cols-3 gap-lg">
         {[
-          { label: "Tổng chi tiêu", value: formatCurrency(totalExpense), sub: "tháng 5" },
-          { label: "Còn lại", value: formatCurrency(25_000_000 - totalExpense), sub: "từ thu nhập", green: true },
-          { label: "Số danh mục", value: `${expenseByCategory.length}`, sub: "danh mục chi" },
+          { label: "Tổng chi tiêu", value: formatCurrency(totalExpense), green: false },
+          { label: "Tiết kiệm tháng", value: formatCurrency(summary.monthlySaving), green: true },
+          { label: "Số danh mục", value: `${expenseByCategory.length}`, green: false },
         ].map((s) => (
           <div key={s.label} className="stitch-card stitch-card-hover p-lg text-center">
             <div className={`font-heading text-h2-kpi font-bold ${s.green ? "text-success" : "text-stitch-on-surface"}`}>{s.value}</div>

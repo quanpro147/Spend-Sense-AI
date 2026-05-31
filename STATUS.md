@@ -1,6 +1,6 @@
 # Project Status / Handoff
 
-Last updated: 2026-05-29
+Last updated: 2026-05-31
 Audience: Backend / Frontend / Full-stack / DevOps / DB engineer
 
 ---
@@ -29,6 +29,8 @@ Most important current behavior:
   - Default: `Tên món / SL / Đơn giá / Thành tiền / Khuyến mãi / Danh mục`.
   - Optional: `Tên món / Thành tiền / Khuyến mãi / Danh mục`, where quantity is saved as `1`.
   - Discount OCR tokens such as `-8.400` are attached to the nearest item row and subtracted from the row total.
+- A new **Investment** feature provides real-time portfolio tracking (VN stocks, crypto, gold) and an AI-driven macro stress test with hedging recommendations.
+- On startup the backend warms up the YOLO detector and VietOCR so the first receipt request is not penalized by cold model loading.
 
 ---
 
@@ -53,11 +55,11 @@ Run migrations:
 uv run alembic upgrade head
 ```
 
-Known gap:
+Resolved (2026-05-31):
 
-- The initial migration is **missing the `category` column on `receipt_items`**.
-  The ORM model in `src/db/models.py` defines `category` (`String(80)`, default `"khac"`) but the migration omits it.
-  A new migration must add this column before the app can persist item categories to the database.
+- The follow-up migration `dd69ecde196e_add_investment_tables.py` (down-revision `df013ec94309`) now adds the missing `category` column to `receipt_items`.
+- The add is idempotent: it inspects existing columns and only adds `category` (`String(80)`, server default `'khac'`, `NOT NULL`) if it is not already present, otherwise it re-asserts the `NOT NULL` constraint.
+- The same migration creates the two investment tables (see **Investment Module (PA3)** below).
 
 ### VietOCR Real Implementation
 
@@ -172,9 +174,68 @@ Implemented (2026-05-29):
 
 - When transaction type is `Thu nhập`: hides receipt upload/camera and item rows.
 
+### Investment Module (PA3)
+
+Implemented (2026-05-31):
+
+New backend feature for real-time portfolio management and AI stress testing. All endpoints require JWT auth and are registered under the `/investment` prefix in `main.py`.
+
+Endpoints (`src/api/routes/investment.py`):
+
+- `GET /investment/profile` — returns the user's investment profile, auto-initializing a default (`risk_appetite="moderate"`, `capital=0`, `goal="Tự do tài chính"`) if none exists.
+- `POST /investment/profile` — create/update profile (`risk_appetite`, `capital`, `goal`).
+- `GET /investment/portfolio` — list assets with real-time valuations (`current_price`, `value`, `profit`, `profit_percent`).
+- `POST /investment/portfolio` — add an asset (`symbol`, `name`, `type` ∈ stock/gold/saving/crypto, `quantity`, `purchase_price`, `color`).
+- `DELETE /investment/portfolio/{asset_id}` — remove an asset (404 if not owned), returns 204.
+- `GET /investment/stress-test` — runs market-shock simulation + Gemini advisory.
+
+Market data (`src/core/market_data.py`), all normalized to VND:
+
+- VN stocks via the `vnstock` library (KBS source); fallback to `DEFAULT_STOCK_PRICES`.
+- Crypto via the Binance public ticker API; fallback to `DEFAULT_CRYPTO_PRICES_USD`.
+- Gold via the SJC RSS feed (`sjc.com.vn/xml/tygia.xml`); fallback to a default gold price.
+- Fixed `USD_VND_RATE = 25400`. External calls use httpx with a 5-second timeout and fall back gracefully on failure.
+
+Stress tester (`src/core/stress_tester.py`):
+
+- Four deterministic shock scenarios: high inflation, tech crash, market recession, crypto collapse.
+- `diversification_score` (0–100) via Simpson's index of asset-type distribution.
+- `vulnerability_score` (0–100) = worst scenario loss percentage.
+- AI advisory via Gemini 2.5 Flash (`_call_gemini` in `src/llm/gemini_client.py`): returns `overall_analysis` plus `hedging_strategies`. Falls back to static recommendations if Gemini fails.
+- No new environment variable; reuses `GEMINI_API_KEY`.
+
+Frontend (`frontend/src/pages/InvestmentPage.tsx`, client functions in `frontend/src/lib/api.ts`):
+
+- Real backend data, no longer mock. Portfolio CRUD, asset-allocation pie chart, and a stress-test tab with a vulnerability gauge and hedging cards.
+- New API client functions: `getInvestmentProfile`, `saveInvestmentProfile`, `getPortfolio`, `addAsset`, `deleteAsset`, `getStressTest`.
+- The portfolio growth curve is still mock history ending at the current portfolio value.
+
+### Model Warm-up At Startup
+
+Implemented (2026-05-31) in `main.py`:
+
+- A FastAPI `lifespan` context manager runs `_warm_up_models()` before serving requests.
+- `_warm_up_models()` calls `warm_up_detector()` (`src/vision/detector.py`) and `warm_up_ocr()` (`src/vision/ocr.py`), each wrapped in try/except that only logs a warning on failure.
+- This loads YOLO weights and the VietOCR `vgg_transformer` predictor up front so the first `/receipts/analyze` request is not slowed by cold loading.
+
+### Receipt Reconstruction Improvements
+
+Implemented (2026-05-31) in `src/vision/reconstructor.py`:
+
+- Field matching now anchors on item boxes (sorted by Y position) and matches quantity/price/discount boxes on the same receipt row using a y-distance score plus an x-position penalty.
+- Handles orphan rows (quantity/price without a matching item name) more robustly.
+
+### Initial Test Suite
+
+Added (2026-05-31):
+
+- A `tests/` directory now exists with `tests/test_investment.py` (pytest).
+- Three tests: diversification score for a single asset (= 0), diversification for an even 4-type split (= 100), and a full stress-test calculation with a mocked profile/assets and patched Gemini call.
+- This is the first automated test in the repo. Other modules (vision, pipeline, auth, cache) remain untested, so the repo-wide `--cov` gate in `pyproject.toml` (80%) is not met yet.
+
 ### Database Startup Behavior
 
-- `main.py` does not initialize database tables at startup.
+- `main.py` does not initialize database tables at startup (only model warm-up runs in `lifespan`).
 - DB initialization is lazy via `ensure_database()` called by auth routes.
 - If DB is unavailable during auth, stateless dev auth fallback is used.
 
@@ -204,7 +265,7 @@ Important files:
 
 Important files:
 
-- `main.py` - FastAPI app creation, CORS, route registration.
+- `main.py` - FastAPI app creation, CORS, route registration, and `lifespan` model warm-up.
 - `alembic.ini` - Alembic migration configuration.
 - `migrations/` - Alembic migration scripts.
 - `src/core/config.py` - Pydantic settings from `.env`.
@@ -218,12 +279,24 @@ Important files:
 - `src/api/routes/transactions.py` - Authenticated transaction create/list endpoints.
 - `src/api/routes/feedback.py` - Insight feedback (confirm/reject) endpoint.
 - `src/api/routes/insights.py` - Health check and ChromaDB-backed insights endpoints.
+- `src/api/routes/investment.py` - Investment profile, portfolio CRUD, and stress-test endpoints.
+- `src/core/market_data.py` - Real-time market prices (vnstock / Binance / SJC), normalized to VND.
+- `src/core/stress_tester.py` - Deterministic market-shock simulation + Gemini hedging advisory.
 - `src/pipeline.py` - Receipt analysis pipeline.
 - `src/vision/detector.py` - YOLO detector with local/Hugging Face model loading.
 - `src/vision/ocr.py` - VietOCR field OCR (`vgg_transformer`, field-level and full-image paths).
 - `src/vision/reconstructor.py` - Receipt row reconstruction.
 - `src/llm/gemini_client.py` - Gemini/Gemma REST client and fallback category classifier.
 - `src/cache/vector_store.py` - ChromaDB semantic cache client.
+
+### Tests
+
+- `tests/test_investment.py` - First automated test (pytest); covers diversification scoring and the stress-test calculation.
+
+### Frontend (investment)
+
+- `frontend/src/pages/InvestmentPage.tsx` - Real-data portfolio management and AI stress-test UI.
+- `frontend/src/lib/api.ts` - Investment client functions (`getInvestmentProfile`, `saveInvestmentProfile`, `getPortfolio`, `addAsset`, `deleteAsset`, `getStressTest`).
 
 ---
 
@@ -353,7 +426,7 @@ Endpoints:
 - `GET /insights/{insight_id}` — single insight. Requires JWT.
 - `POST /feedback/{insight_id}` — confirm/reject insight pattern. Requires JWT.
 
-### 4.6 Dashboard / Analytics / Goals / Investment / Settings
+### 4.6 Dashboard / Analytics / Goals / Settings
 
 Status: **Mock-data UI**
 
@@ -363,7 +436,31 @@ Not connected yet:
 
 - Dashboard recent transactions.
 - Analytics category breakdown.
-- Goals, investment, settings persistence.
+- Goals, settings persistence.
+
+(Investment is no longer mock — see 4.7.)
+
+### 4.7 Investment And Stress Testing
+
+Status: **Implemented (PA3)**
+
+Endpoints (all require JWT):
+
+- `GET /investment/profile`, `POST /investment/profile`
+- `GET /investment/portfolio`, `POST /investment/portfolio`, `DELETE /investment/portfolio/{asset_id}`
+- `GET /investment/stress-test`
+
+Behavior:
+
+- Portfolio assets are valued in real time using `src/core/market_data.py` (VN stocks via vnstock, crypto via Binance, gold via SJC RSS), normalized to VND with a fixed `USD_VND_RATE = 25400`.
+- `GET /investment/stress-test` runs four deterministic market-shock scenarios, computes `diversification_score` (Simpson's index) and `vulnerability_score` (worst loss), and asks Gemini 2.5 Flash for an `overall_analysis` plus `hedging_strategies`, with a static fallback if Gemini is unavailable.
+- Frontend `InvestmentPage.tsx` consumes these endpoints directly.
+
+Known limitations:
+
+- Money uses `Float` (`capital`, `quantity`, `purchase_price`); should become `Numeric`.
+- The portfolio growth curve on the frontend is still mock history.
+- External market-data sources are subject to network latency and rate limiting; all have hardcoded fallbacks.
 
 ---
 
@@ -382,28 +479,31 @@ Run to apply schema:
 uv run alembic upgrade head
 ```
 
-### Implemented Tables (via Alembic revision `df013ec94309`)
+### Implemented Tables
+
+Base schema via revision `df013ec94309`; `category` column and investment tables via revision `dd69ecde196e`.
 
 | Table | Key columns |
 |---|---|
 | `users` | id (uuid), email, hashed_password, created_at |
 | `receipts` | id, user_id, merchant, purchase_date, total_amount, currency, raw_text, created_at |
-| `receipt_items` | id, receipt_id, name, quantity, unit_price, total_price ⚠️ |
+| `receipt_items` | id, receipt_id, name, quantity, unit_price, total_price, category |
 | `transactions` | id, user_id, receipt_id, type, amount, currency, category, description, merchant, transaction_date, created_at, updated_at |
+| `investment_profiles` | id, user_id (UNIQUE), risk_appetite, capital, goal, created_at, updated_at |
+| `investment_assets` | id, user_id, symbol, name, type, quantity, purchase_price, color, created_at, updated_at |
 
-⚠️ **Migration gap**: `receipt_items` migration is missing the `category` column.  
-The ORM model (`src/db/models.py`) defines `category: Mapped[str] = mapped_column(String(80), default="khac")`, but revision `df013ec94309` does not create it. A follow-up migration is needed.
+The `receipt_items.category` column (`String(80)`, server default `'khac'`, `NOT NULL`) is now created by revision `dd69ecde196e` (idempotent add-if-missing). The earlier migration gap is resolved.
 
 ### Still Missing
 
-- Migration to add `category` to `receipt_items`.
 - `categories` table.
 - `transaction_items` table.
 - `detected_receipt_tokens` table.
 - `receipt_review_assignments` table.
 - SQL-backed `insights` (currently ChromaDB only).
 - SQL-backed `feedback`.
-- Budgets / goals / investment / settings tables.
+- Budgets / goals / settings tables.
+- `Numeric` money type (investment + transaction amounts still use `Float`).
 
 ---
 
@@ -529,6 +629,64 @@ or
 { "action": "REJECT", "vector_id": "chroma-vector-id" }
 ```
 
+### Investment
+
+All investment endpoints require `Authorization: Bearer <jwt>`.
+
+#### `GET /investment/profile`
+
+Returns the user's profile, creating a default if none exists:
+
+```json
+{ "id": "uuid", "user_id": "uuid", "risk_appetite": "moderate", "capital": 0, "goal": "Tự do tài chính", "updated_at": "datetime" }
+```
+
+#### `POST /investment/profile`
+
+```json
+{ "risk_appetite": "moderate", "capital": 100000000, "goal": "Mua nhà" }
+```
+
+#### `GET /investment/portfolio`
+
+Returns a list of assets with real-time valuations:
+
+```json
+[
+  {
+    "id": "uuid", "user_id": "uuid", "symbol": "FPT", "name": "FPT Corp", "type": "stock",
+    "quantity": 100, "purchase_price": 120000, "current_price": 135000,
+    "value": 13500000, "profit": 1500000, "profit_percent": 12.5, "color": "#5BAAEC", "updated_at": "datetime"
+  }
+]
+```
+
+#### `POST /investment/portfolio`
+
+```json
+{ "symbol": "FPT", "name": "FPT Corp", "type": "stock", "quantity": 100, "purchase_price": 120000, "color": "#5BAAEC" }
+```
+
+`type` ∈ `stock` | `gold` | `saving` | `crypto`.
+
+#### `DELETE /investment/portfolio/{asset_id}`
+
+Returns `204 No Content`. Returns `404` if the asset is not owned by the user.
+
+#### `GET /investment/stress-test`
+
+```json
+{
+  "portfolio_value": 60000000, "total_capital": 100000000, "idle_cash": 40000000,
+  "vulnerability_score": 42.0, "diversification_score": 66.7,
+  "worst_scenario": "Suy thoái thị trường", "worst_loss_percent": 42.0,
+  "scenarios": [ { "id": "...", "name": "...", "simulated_value": 0, "loss_value": 0, "loss_percent": 0 } ],
+  "assets": [ /* InvestmentAssetResponse */ ],
+  "overall_analysis": "string (Vietnamese, from Gemini)",
+  "hedging_strategies": [ { "asset": "...", "action": "...", "amount": 0, "reasoning": "..." } ]
+}
+```
+
 ---
 
 ## 7) Environment Variables
@@ -622,11 +780,14 @@ spendsense_user
 - `npm run build` passed.
 - Receipt discount reconstruction was smoke-tested with `42.300` plus `-8.400`, producing net line total `33.900`.
 - Password hashing smoke test passed with pinned `bcrypt==4.0.1` and `passlib==1.7.4`.
+- `uv run pytest tests/test_investment.py` — 3 passed (2026-05-31).
+- `python -m compileall main.py src` passed (2026-05-31).
 
 Known test gap:
 
-- No automated backend or frontend test suite is present.
-- `pyproject.toml` has pytest config but no `tests/` directory.
+- Only `tests/test_investment.py` exists; vision, pipeline, auth, receipts, and cache have no tests.
+- The `pyproject.toml` `--cov` gate (80%) is not met because coverage is measured repo-wide.
+- No frontend test suite.
 
 ---
 
@@ -634,10 +795,9 @@ Known test gap:
 
 ### P0
 
-- **Migration gap**: `receipt_items` Alembic migration (`df013ec94309`) is missing the `category` column. Must add a second migration before item categories can be persisted. Without it, the ORM will fail on INSERT for `receipt_items`.
 - Auth fallback when DB is down is development-only and must not be production behavior.
 - Transaction save still requires PostgreSQL for persistence.
-- Money is stored as `Float`; should become `Numeric`.
+- Money is stored as `Float` (transactions and investment); should become `Numeric`.
 
 ### P1
 
@@ -647,7 +807,8 @@ Known test gap:
 - No dedicated `transaction_items` table.
 - No SQL-backed categories table.
 - Google OAuth setup must be done manually in Google Cloud.
-- VietOCR first-request latency: model loads on the first OCR call; no warm-up or progress indicator.
+- Investment portfolio growth curve is mock history (frontend only).
+- Investment market data depends on external sources (vnstock / Binance / SJC) with hardcoded fallbacks; live prices can be stale or rate-limited.
 
 ### P2
 
@@ -662,9 +823,8 @@ Known test gap:
 
 ### P0
 
-1. Add Alembic migration to add `category` column to `receipt_items` table.
-2. Replace money `Float` fields with `Numeric` in models and migrations.
-3. Decide how to disable DB-offline auth fallback outside local development.
+1. Replace money `Float` fields with `Numeric` in models and migrations (transactions and investment).
+2. Decide how to disable DB-offline auth fallback outside local development.
 
 ### P1
 
@@ -672,8 +832,8 @@ Known test gap:
 2. Add transaction list and delete/edit flows.
 3. Add `transaction_items` table or finalize `receipt_items` as confirmed item storage.
 4. Add categories table and category management.
-5. Add tests for auth, receipt analyze, and transaction creation.
-6. Add VietOCR warm-up call at startup (optional) or expose a `/health/model` endpoint.
+5. Expand tests beyond `tests/test_investment.py` to auth, receipt analyze, and transaction creation.
+6. Expose a `/health/model` endpoint (warm-up already runs at startup via `lifespan`).
 
 ### P2
 

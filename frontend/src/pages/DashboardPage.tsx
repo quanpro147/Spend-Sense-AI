@@ -8,14 +8,11 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { formatCurrency, formatPercent, formatDate } from "@/lib/utils";
-import {
-  walletSummary,
-  recentTransactions,
-  monthlyTrend,
-  financialGoals,
-  aiInvestmentSuggestions,
-} from "@/data/mockData";
 import { Link } from "react-router-dom";
+import { listGoals, listInsights, listTransactions, type GoalRecord, type InsightRecord, type TransactionRecord } from "@/lib/api";
+import { useApiData } from "@/hooks/useApiData";
+import { deriveMonthlyTrend, deriveWalletSummary, toRecentTransactions } from "@/lib/derive";
+import { useAuth } from "@/lib/auth";
 
 // ── KPI stat card matching Stitch: white, 16px radius, soft shadow, hover lift ──
 function StatCard({
@@ -84,8 +81,43 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
+interface DashboardData {
+  transactions: TransactionRecord[];
+  goals: GoalRecord[];
+  insights: InsightRecord[];
+}
+
 export function DashboardPage() {
-  const goalDisplay = financialGoals.slice(0, 2);
+  const { user } = useAuth();
+  const { data, loading, error, reload } = useApiData<DashboardData>(async () => {
+    const [transactions, goals, insights] = await Promise.all([
+      listTransactions(),
+      listGoals().catch(() => []),
+      listInsights().catch(() => []),
+    ]);
+    return { transactions, goals, insights };
+  }, []);
+
+  if (loading) {
+    return <div className="py-20 text-center text-stitch-on-surface-variant">Đang tải bảng điều khiển…</div>;
+  }
+  if (error) {
+    return (
+      <div className="py-20 text-center space-y-3">
+        <p className="text-danger">{error}</p>
+        <button onClick={reload} className="btn-outline">Thử lại</button>
+      </div>
+    );
+  }
+
+  const txns = data?.transactions ?? [];
+  const goals = data?.goals ?? [];
+  const insights = data?.insights ?? [];
+  const summary = deriveWalletSummary(txns);
+  const monthlyTrend = deriveMonthlyTrend(txns);
+  const recentTransactions = toRecentTransactions(txns, 6);
+  const goalDisplay = goals.slice(0, 2);
+  const investable = Math.max(summary.monthlySaving, 0);
 
   return (
     <div className="space-y-xxl">
@@ -99,78 +131,83 @@ export function DashboardPage() {
             Theo dõi chi tiêu, tối ưu tiết kiệm và nhận tư vấn đầu tư thông minh từ AI.
           </p>
           <p className="text-body-sm text-stitch-on-surface-variant mt-1">
-            {formatDate(new Date())} · Chào buổi sáng, Tuấn!
+            {formatDate(new Date())} · Xin chào{user?.email ? `, ${user.email}` : ""}!
           </p>
         </div>
       </div>
 
-      {/* ── KPI Cards (4 columns — exact Stitch Section 1 layout) ── */}
+      {/* ── KPI Cards ── */}
       <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-lg">
         <StatCard
           label="Chi tiêu tháng này"
-          value={formatCurrency(walletSummary.monthlyExpense).replace("₫", "").trim()}
+          value={formatCurrency(summary.monthlyExpense).replace("₫", "").trim()}
           unit="VND"
-          change={walletSummary.expenseChange}
+          change={summary.expenseChange}
           icon="wallet"
           accent="amber"
         />
         <StatCard
-          label="Tiết kiệm hiện tại"
-          value={formatCurrency(walletSummary.monthlySaving).replace("₫", "").trim()}
+          label="Tiết kiệm tháng này"
+          value={formatCurrency(summary.monthlySaving).replace("₫", "").trim()}
           unit="VND"
-          change={walletSummary.incomeChange}
+          change={summary.incomeChange}
           changeLabel="tăng trưởng"
           icon="savings"
           accent="green"
         />
         <StatCard
           label="Tiền có thể đầu tư"
-          value={formatCurrency(aiInvestmentSuggestions[2].amount).replace("₫", "").trim()}
+          value={formatCurrency(investable).replace("₫", "").trim()}
           unit="VND"
           icon="bolt"
           accent="blue"
         />
         <StatCard
-          label="Tiến độ mục tiêu"
-          value={walletSummary.savingRate.toFixed(0) + "%"}
-          unit="Tổng"
+          label="Tỷ lệ tiết kiệm"
+          value={summary.savingRate.toFixed(0) + "%"}
+          unit="Tháng"
           icon="flag"
           accent="purple"
         />
       </section>
 
-      {/* ── AI Insight Panel (Stitch Section 2 — ai-insight-border) ── */}
+      {/* ── AI Insight Panel ── */}
       <section>
         <div className="ai-insight-card flex flex-col lg:flex-row items-start gap-xl p-xl rounded-lg">
           <div className="flex-1 space-y-4">
             <div className="flex items-center gap-3">
               <span className="bg-stitch-primary-container/20 text-brand-blue-dark px-3 py-1 rounded-full text-label-caps flex items-center gap-1">
                 <Sparkles className="w-3.5 h-3.5" />
-                ĐỘ TIN CẬY AI: 98%
+                AI COPILOT
               </span>
-              <span className="text-stitch-on-surface-variant text-body-sm">Phân tích 2 phút trước</span>
+              <span className="text-stitch-on-surface-variant text-body-sm">{insights.length} phân tích gần đây</span>
             </div>
             <h3 className="font-heading text-h2-kpi text-stitch-on-surface">
-              Cơ Hội Tối Ưu Tài Chính
+              {insights[0]?.summary ?? "Cơ Hội Tối Ưu Tài Chính"}
             </h3>
             <p className="text-body-lg text-stitch-on-surface-variant">
-              Chúng tôi phát hiện khoản thặng dư{" "}
-              <strong className="text-stitch-primary-container">{formatCurrency(aiInvestmentSuggestions[2].amount)}</strong>{" "}
-              trong tài khoản của bạn. Chuyển sang{" "}
-              <strong className="text-stitch-primary-container">Gửi tiết kiệm 6 tháng (6.1%/năm)</strong>{" "}
-              có thể tăng số dư cuối năm lên ~{" "}
-              <strong>12.4%</strong> dựa trên xu hướng hiện tại.
+              {investable > 0 ? (
+                <>
+                  Bạn đang có khoản thặng dư{" "}
+                  <strong className="text-stitch-primary-container">{formatCurrency(investable)}</strong>{" "}
+                  trong tháng này. Cân nhắc phân bổ vào tiết kiệm hoặc danh mục đầu tư phù hợp với hồ sơ rủi ro của bạn.
+                </>
+              ) : (
+                <>Hãy thêm giao dịch hoặc tải lên hóa đơn để AI bắt đầu phân tích chi tiêu của bạn.</>
+              )}
             </p>
-            <button className="btn-primary flex items-center gap-2">
-              Gửi {formatCurrency(aiInvestmentSuggestions[2].amount)} ngay
+            <Link to="/investment" className="btn-primary inline-flex items-center gap-2 w-fit">
+              Xem gợi ý đầu tư
               <ArrowRight className="w-4 h-4" />
-            </button>
+            </Link>
           </div>
           {/* Mini trend chart */}
           <div className="w-full lg:w-72 bg-stitch-surface rounded-lg p-lg border border-stitch-outline-variant">
             <div className="flex justify-between items-center mb-3">
               <span className="text-label-caps text-stitch-on-surface-variant">Xu Hướng Thu Chi</span>
-              <span className="text-success text-data-tabular">+{walletSummary.incomeChange}% tháng</span>
+              <span className={`text-data-tabular ${summary.incomeChange >= 0 ? "text-success" : "text-danger"}`}>
+                {formatPercent(summary.incomeChange)} tháng
+              </span>
             </div>
             <ResponsiveContainer width="100%" height={128}>
               <AreaChart data={monthlyTrend.slice(-5)} margin={{ top: 5, right: 0, bottom: 0, left: 0 }}>
@@ -189,7 +226,7 @@ export function DashboardPage() {
         </div>
       </section>
 
-      {/* ── Analytics + Goals (Stitch Section 3 / 4 layout) ── */}
+      {/* ── Analytics + Goals ── */}
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-xl">
         {/* Monthly Chart */}
         <div className="stitch-card p-lg">
@@ -233,38 +270,42 @@ export function DashboardPage() {
               Xem tất cả <ArrowRight className="w-4 h-4" />
             </Link>
           </div>
-          <div className="space-y-6">
-            {goalDisplay.map((goal) => {
-              const pct = Math.min((goal.currentAmount / goal.targetAmount) * 100, 100);
-              return (
-                <div key={goal.id}>
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xl">{goal.emoji}</span>
-                      <div>
-                        <div className="font-semibold text-base text-stitch-on-surface">{goal.title}</div>
-                        <div className="text-body-sm text-stitch-on-surface-variant">
-                          {formatCurrency(goal.currentAmount)} / {formatCurrency(goal.targetAmount)} VND
+          {goalDisplay.length === 0 ? (
+            <p className="text-body-sm text-stitch-on-surface-variant">Chưa có mục tiêu nào. Tạo mục tiêu đầu tiên của bạn!</p>
+          ) : (
+            <div className="space-y-6">
+              {goalDisplay.map((goal) => {
+                const pct = Math.min(goal.progress_percent, 100);
+                return (
+                  <div key={goal.id}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl">{goal.emoji}</span>
+                        <div>
+                          <div className="font-semibold text-base text-stitch-on-surface">{goal.title}</div>
+                          <div className="text-body-sm text-stitch-on-surface-variant">
+                            {formatCurrency(goal.current_amount)} / {formatCurrency(goal.target_amount)} VND
+                          </div>
                         </div>
                       </div>
+                      <span className={`text-base font-bold ${goal.status === "at-risk" ? "text-warning" : "text-success"}`}>
+                        {pct.toFixed(0)}%
+                      </span>
                     </div>
-                    <span className={`text-base font-bold ${goal.status === "at-risk" ? "text-warning" : "text-success"}`}>
-                      {pct.toFixed(0)}%
-                    </span>
+                    <div className="w-full bg-stitch-surface-container-high h-2 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-700"
+                        style={{
+                          width: `${pct}%`,
+                          backgroundColor: goal.status === "at-risk" ? "#F59E0B" : goal.status === "achieved" ? "#22C55E" : "#5BAAEC",
+                        }}
+                      />
+                    </div>
                   </div>
-                  <div className="w-full bg-stitch-surface-container-high h-2 rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-700"
-                      style={{
-                        width: `${pct}%`,
-                        backgroundColor: goal.status === "at-risk" ? "#F59E0B" : goal.status === "achieved" ? "#22C55E" : "#5BAAEC",
-                      }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </section>
 
@@ -278,22 +319,26 @@ export function DashboardPage() {
               Xem tất cả
             </Link>
           </div>
-          <div className="divide-y divide-stitch-outline-variant/60">
-            {recentTransactions.slice(0, 6).map((txn) => (
-              <div key={txn.id} className="flex items-center gap-3 py-3">
-                <div className="w-10 h-10 rounded-lg bg-stitch-surface-container flex items-center justify-center text-lg flex-shrink-0">
-                  {txn.icon}
+          {recentTransactions.length === 0 ? (
+            <p className="text-body-sm text-stitch-on-surface-variant">Chưa có giao dịch nào.</p>
+          ) : (
+            <div className="divide-y divide-stitch-outline-variant/60">
+              {recentTransactions.map((txn) => (
+                <div key={txn.id} className="flex items-center gap-3 py-3">
+                  <div className="w-10 h-10 rounded-lg bg-stitch-surface-container flex items-center justify-center text-lg flex-shrink-0">
+                    {txn.icon}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-base font-medium text-stitch-on-surface truncate">{txn.description}</div>
+                    <div className="text-body-sm text-stitch-on-surface-variant">{txn.category}</div>
+                  </div>
+                  <div className={`text-base font-bold font-heading tabular-nums ${txn.type === "income" ? "text-success" : "text-stitch-on-surface"}`}>
+                    {txn.type === "income" ? "+" : ""}{formatCurrency(Math.abs(txn.amount))}
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-base font-medium text-stitch-on-surface truncate">{txn.description}</div>
-                  <div className="text-body-sm text-stitch-on-surface-variant">{txn.category}</div>
-                </div>
-                <div className={`text-base font-bold font-heading tabular-nums ${txn.type === "income" ? "text-success" : "text-stitch-on-surface"}`}>
-                  {txn.type === "income" ? "+" : ""}{formatCurrency(Math.abs(txn.amount))}
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* AI Copilot Panel */}
@@ -304,32 +349,28 @@ export function DashboardPage() {
             </div>
             <div>
               <div className="font-heading font-semibold text-base text-stitch-on-surface">AI Copilot</div>
-              <div className="text-body-sm text-stitch-on-surface-variant">3 gợi ý mới hôm nay</div>
+              <div className="text-body-sm text-stitch-on-surface-variant">{insights.length} gợi ý gần đây</div>
             </div>
           </div>
 
           <div className="space-y-3">
-            <div className="bg-white rounded-lg p-4 border border-stitch-outline-variant/60">
-              <p className="font-semibold text-base text-stitch-on-surface mb-1">💡 Tỷ lệ tiết kiệm tuyệt vời!</p>
-              <p className="text-body-sm text-stitch-on-surface-variant leading-relaxed">
-                Tháng này bạn tiết kiệm <strong className="text-success">{walletSummary.savingRate}%</strong> thu nhập —
-                vượt trung bình quốc gia. Tiếp tục đà này!
-              </p>
-            </div>
-            <div className="bg-white rounded-lg p-4 border border-amber-200/60">
-              <p className="font-semibold text-base text-stitch-on-surface mb-1">⚠️ Cảnh báo ăn uống</p>
-              <p className="text-body-sm text-stitch-on-surface-variant leading-relaxed">
-                Chi tiêu ăn uống tháng này cao hơn trung bình 3 tháng <strong className="text-warning">15%</strong>.
-                Cân nhắc tự nấu ăn thêm.
-              </p>
-            </div>
-            <div className="bg-white rounded-lg p-4 border border-stitch-outline-variant/60">
-              <p className="font-semibold text-base text-stitch-on-surface mb-1">📈 Gợi ý đầu tư</p>
-              <p className="text-body-sm text-stitch-on-surface-variant leading-relaxed">
-                Bạn có <strong className="text-stitch-primary-container">{formatCurrency(aiInvestmentSuggestions[2].amount)}</strong> nhàn rỗi.
-                AI khuyến nghị gửi tiết kiệm kỳ hạn 6 tháng (6.1%/năm).
-              </p>
-            </div>
+            {insights.length === 0 ? (
+              <div className="bg-white rounded-lg p-4 border border-stitch-outline-variant/60">
+                <p className="font-semibold text-base text-stitch-on-surface mb-1">💡 Chưa có phân tích</p>
+                <p className="text-body-sm text-stitch-on-surface-variant leading-relaxed">
+                  Tải lên hóa đơn để AI tạo gợi ý tài chính cá nhân hóa cho bạn.
+                </p>
+              </div>
+            ) : (
+              insights.slice(0, 3).map((insight) => (
+                <div key={insight.insight_id} className="bg-white rounded-lg p-4 border border-stitch-outline-variant/60">
+                  <p className="font-semibold text-base text-stitch-on-surface mb-1">💡 {insight.summary}</p>
+                  {insight.tips.length > 0 && (
+                    <p className="text-body-sm text-stitch-on-surface-variant leading-relaxed">{insight.tips[0]}</p>
+                  )}
+                </div>
+              ))
+            )}
           </div>
         </div>
       </section>

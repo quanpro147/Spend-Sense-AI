@@ -30,7 +30,7 @@
 | **Cache** | Redis | Session cache, tốc độ cực nhanh |
 | **Core LLM** | Gemini 2.5 Flash | Phân tích ngữ cảnh, xu hướng thị trường |
 | **Computer Vision** | YOLOv11 | Detect vùng thông tin trên hóa đơn/ảnh |
-| **OCR** | PaddleOCR / EasyOCR | Trích xuất chữ từ ảnh hóa đơn |
+| **OCR** | VietOCR | Trích xuất chữ từ ảnh hóa đơn |
 | **LLM Router** | Semantic Router | Kiểm tra cache, gán nhãn danh mục |
 | **Investment Agent** | ReAct Agent + Gemini | Phân tích thị trường, gợi ý đầu tư |
 
@@ -106,7 +106,7 @@ Input
   ├─ Nếu là ảnh ──► YOLOv11 (detect vùng thông tin)
   │                    │
   │                    ▼
-  │              PaddleOCR / EasyOCR (extract text)
+  │              VietOCR (extract text)
   │                    │
   │                    ▼
   └─ Nếu là text ──► Semantic Router
@@ -126,7 +126,7 @@ Input
                   Publish → Message Queue
 ```
 
-**Tech:** FastAPI endpoint, Celery worker, YOLOv11, PaddleOCR
+**Tech:** FastAPI endpoint, Celery worker, YOLOv11, VietOCR
 
 ---
 
@@ -246,7 +246,7 @@ else:
 **Các task queue:**
 | Queue | Tác vụ | Priority |
 |---|---|---|
-| `ocr_queue` | YOLOv11 + PaddleOCR processing | High |
+| `ocr_queue` | YOLOv11 + VietOCR processing | High |
 | `llm_queue` | Gemini API calls | Medium |
 | `investment_queue` | ReAct Agent analysis | Medium |
 | `report_queue` | Tạo báo cáo + biểu đồ | Low |
@@ -263,10 +263,10 @@ else:
 - **Output:** Bounding boxes của các vùng text cần extract
 - **Deploy:** Chạy trong Celery worker, không blocking API
 
-### 4.2 PaddleOCR / EasyOCR — Text Extraction
+### 4.2 VietOCR — Text Extraction
 
 - **Mục đích:** Trích xuất text từ vùng ảnh đã crop bởi YOLO.
-- **Ưu tiên:** PaddleOCR (tiếng Việt tốt hơn), fallback sang EasyOCR
+- **Engine:** VietOCR (`vgg_transformer`) — chuyên tối ưu cho tiếng Việt
 - **Output:** Raw text string → đưa vào Semantic Router
 
 ### 4.3 Gemini 2.5 Flash — Core LLM
@@ -305,7 +305,7 @@ User upload ảnh / nhập text
         ▼
 API Gateway → Data Ingestion Service
         │
-        ├─[ảnh]─► YOLOv11 detect → PaddleOCR extract text
+        ├─[ảnh]─► YOLOv11 detect → VietOCR extract text
         │
         └─[text]─► (join tại đây)
                           │
@@ -551,7 +551,7 @@ Phase 1 — Foundation
   ✅ Redis setup
 
 Phase 2 — AI Core
-  ✅ Tích hợp PaddleOCR / EasyOCR
+  ✅ Tích hợp VietOCR
   ✅ Tích hợp YOLOv11 (ảnh hóa đơn)
   ✅ Gemini API → phân loại giao dịch
   ✅ ChromaDB + Semantic Router (cache layer)

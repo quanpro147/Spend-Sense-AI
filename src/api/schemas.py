@@ -6,7 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from src.models.expense import FeedbackAction, Insight
-from src.db.models import Transaction
+from src.db.models import FinancialGoal, Transaction
 
 
 # ---------------------------------------------------------------------------
@@ -196,3 +196,175 @@ class InsightListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# ---------------------------------------------------------------------------
+# Investment schemas
+# ---------------------------------------------------------------------------
+
+class InvestmentProfileRequest(BaseModel):
+    risk_appetite: str
+    capital: float
+    goal: str = ""
+
+
+class InvestmentProfileResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    risk_appetite: str
+    capital: float
+    goal: str
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class InvestmentAssetRequest(BaseModel):
+    symbol: str
+    name: str
+    type: str  # stock, gold, saving, crypto
+    quantity: float
+    purchase_price: float
+    color: str = "#5BAAEC"
+
+
+class InvestmentAssetResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    symbol: str
+    name: str
+    type: str
+    quantity: float
+    purchase_price: float
+    current_price: float | None = None
+    value: float | None = None
+    profit: float | None = None
+    profit_percent: float | None = None
+    color: str
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class HedgingStrategyResponse(BaseModel):
+    asset: str
+    action: str
+    amount: float
+    reasoning: str
+
+
+class ScenarioResultResponse(BaseModel):
+    id: str
+    name: str
+    simulated_value: float
+    loss_value: float
+    loss_percent: float
+
+
+class StressTestResponse(BaseModel):
+    portfolio_value: float
+    total_capital: float
+    idle_cash: float
+    vulnerability_score: float
+    diversification_score: float
+    worst_scenario: str
+    worst_loss_percent: float
+    scenarios: list[ScenarioResultResponse]
+    assets: list[InvestmentAssetResponse]
+    overall_analysis: str
+    hedging_strategies: list[HedgingStrategyResponse]
+
+
+# ---------------------------------------------------------------------------
+# Financial goals schemas
+# ---------------------------------------------------------------------------
+
+class GoalCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    emoji: str = "🎯"
+    target_amount: float = Field(gt=0)
+    current_amount: float = Field(default=0.0, ge=0)
+    monthly_target: float = Field(default=0.0, ge=0)
+    deadline: date | None = None
+    ai_note: str = ""
+
+
+class GoalUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    emoji: str | None = None
+    target_amount: float | None = Field(default=None, gt=0)
+    current_amount: float | None = Field(default=None, ge=0)
+    monthly_target: float | None = Field(default=None, ge=0)
+    deadline: date | None = None
+    ai_note: str | None = None
+
+
+class GoalResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    title: str
+    emoji: str
+    target_amount: float
+    current_amount: float
+    monthly_target: float
+    deadline: date | None = None
+    ai_note: str
+    status: str  # on-track | at-risk | achieved
+    progress_percent: float
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @classmethod
+    def from_goal(cls, goal: "FinancialGoal") -> "GoalResponse":
+        progress = (goal.current_amount / goal.target_amount * 100) if goal.target_amount > 0 else 0.0
+        if progress >= 100:
+            status = "achieved"
+        elif progress >= 50:
+            status = "on-track"
+        else:
+            status = "at-risk"
+        return cls(
+            id=goal.id,
+            user_id=goal.user_id,
+            title=goal.title,
+            emoji=goal.emoji,
+            target_amount=goal.target_amount,
+            current_amount=goal.current_amount,
+            monthly_target=goal.monthly_target,
+            deadline=goal.deadline,
+            ai_note=goal.ai_note,
+            status=status,
+            progress_percent=round(progress, 1),
+            created_at=goal.created_at,
+            updated_at=goal.updated_at,
+        )
+
+
+class GoalListResponse(BaseModel):
+    items: list[GoalResponse]
+    total: int
+
+
+# ---------------------------------------------------------------------------
+# User preferences schemas
+# ---------------------------------------------------------------------------
+
+class PreferencesUpdateRequest(BaseModel):
+    weekly_report: bool | None = None
+    rebalance_suggestions: bool | None = None
+    anomaly_alerts: bool | None = None
+    goal_reminders: bool | None = None
+
+
+class PreferencesResponse(BaseModel):
+    user_id: UUID
+    weekly_report: bool
+    rebalance_suggestions: bool
+    anomaly_alerts: bool
+    goal_reminders: bool
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+

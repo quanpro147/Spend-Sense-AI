@@ -58,8 +58,12 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--cov=src --cov-report=term-missing --cov-fail-under=80"
 
+[tool.coverage.run]
+concurrency = ["thread", "greenlet"]
+
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.22.1",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.25.0",
     "pytest-cov>=6.0.0",

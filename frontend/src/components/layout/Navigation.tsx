@@ -7,13 +7,12 @@ import {
   TrendingUp,
   Settings,
   Plus,
-  Bell,
   Sparkles,
-  Zap,
   LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AddTransactionModal } from "@/components/AddTransactionModal";
+import { NotificationBell } from "@/components/layout/NotificationBell";
 import { useAuth } from "@/lib/auth";
 
 const navItems = [
@@ -110,14 +109,7 @@ export function TopBar({ onAddTx }: Readonly<{ onAddTx: () => void }>) {
           Thêm
         </button>
 
-        <button className="relative w-9 h-9 rounded-full flex items-center justify-center text-stitch-on-surface-variant hover:bg-stitch-surface-container transition-colors">
-          <Bell className="w-5 h-5" />
-          <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500" />
-        </button>
-
-        <button className="relative w-9 h-9 rounded-full flex items-center justify-center text-stitch-on-surface-variant hover:bg-stitch-surface-container transition-colors">
-          <Zap className="w-5 h-5 text-stitch-primary-container" />
-        </button>
+        <NotificationBell />
 
         <div className="hidden sm:block text-right leading-tight">
           <div className="text-sm font-semibold text-stitch-on-surface">{user?.email}</div>
