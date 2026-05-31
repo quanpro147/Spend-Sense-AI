@@ -13,7 +13,7 @@ Receipt Image
 [YOLOv11]               ── detect & crop receipt region
      │
      ▼
-[PaddleOCR]             ── extract items, prices, date, merchant
+[VietOCR]               ── extract items, prices, date, merchant
      │
      ▼
 [Sentence-Transformers] ── embed receipt text → float vector
@@ -54,7 +54,7 @@ Spend-Sense-AI/                    # monorepo root
 │   │
 │   ├── vision/                    # CV pipeline  [stub — plug real model later]
 │   │   ├── detector.py            #   YOLOv11 receipt region detection
-│   │   └── ocr.py                 #   PaddleOCR text + price extraction
+│   │   └── ocr.py                 #   VietOCR text + price extraction
 │   │
 │   ├── embedding/                 # vector embedding  [stub]
 │   │   └── embedder.py            #   sentence-transformers wrapper
@@ -170,7 +170,7 @@ uv run pytest
 | Layer | Technology |
 |-------|-----------|
 | Object Detection | YOLOv11 (Ultralytics) |
-| OCR | PaddleOCR 2.x |
+| OCR | VietOCR (vgg_transformer) |
 | Embeddings | sentence-transformers `all-MiniLM-L6-v2` |
 | Vector DB | ChromaDB (dev) → Milvus (prod) |
 | LLM | Gemini 2.5 Flash |

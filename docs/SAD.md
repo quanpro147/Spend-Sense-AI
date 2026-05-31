@@ -48,7 +48,7 @@ Receipt Image (upload)
 [YOLOv11 Detector]  ──────── phát hiện và crop vùng hóa đơn
        │
        ▼
-[PaddleOCR Extractor] ─────── trích xuất text → Receipt object
+[VietOCR Extractor] ───────── trích xuất text → Receipt object
        │
        ▼
 [Sentence-Transformer Embedder] ── chuyển canonical_text → vector 384 chiều
@@ -168,7 +168,7 @@ Report Response (PDF / JSON) → Presentation Layer
 |---|---|---|---|---|
 | **Backend API** | `main.py`, `src/api/routes/` | Tất cả | ✅ Implemented | FastAPI entrypoint, định tuyến request |
 | **Auth Module** | `src/auth/` | Tất cả | ✅ Implemented | JWT, bcrypt, dependency injection |
-| **CV & OCR Module** | `src/vision/` | Luồng 1 | ✅ Stub | YOLOv11 detect, PaddleOCR extract |
+| **CV & OCR Module** | `src/vision/` | Luồng 1 | ✅ Stub | YOLOv11 detect, VietOCR extract |
 | **Embedding Module** | `src/embedding/` | Luồng 1 | ✅ Stub | sentence-transformers → vector 384 chiều |
 | **Semantic Cache** | `src/cache/` | Luồng 1 | ✅ Implemented | ChromaDB lookup/store/delete |
 | **LLM Module** | `src/llm/` | Luồng 1, 3, 4, 5 | ✅ Implemented | Gemini 2.5 Flash — insight, portfolio, report |
@@ -208,8 +208,8 @@ Report Response (PDF / JSON) → Presentation Layer
 
 | Mục | Nội dung |
 |-----|----------|
-| **Lớp triển khai** | `src/vision/detector.py` (YOLOv11), `src/vision/ocr.py` (PaddleOCR) |
-| **Trách nhiệm** | `VisionDetector`: nhận ảnh gốc, dùng YOLOv11 phát hiện bounding box của hóa đơn, cắt (crop) vùng đó ra. `OCRExtractor`: nhận ảnh đã crop, dùng PaddleOCR trích xuất text thô, parse các dòng để xác định merchant, ngày mua, danh sách mặt hàng, tổng tiền — trả về `Receipt` có cấu trúc. Cả hai hiện là stub (deterministic mock). |
+| **Lớp triển khai** | `src/vision/detector.py` (YOLOv11), `src/vision/ocr.py` (VietOCR) |
+| **Trách nhiệm** | `VisionDetector`: nhận ảnh gốc, dùng YOLOv11 phát hiện bounding box của hóa đơn, cắt (crop) vùng đó ra. `OCRExtractor`: nhận ảnh đã crop, dùng VietOCR trích xuất text thô, parse các dòng để xác định merchant, ngày mua, danh sách mặt hàng, tổng tiền — trả về `Receipt` có cấu trúc. Cả hai hiện là stub (deterministic mock). |
 | **Kết nối đến component khác** | ← **Pipeline Orchestrator**: bước 1 (`detect_receipt`) và bước 2 (`extract_receipt`) trong chuỗi Luồng 1. → **Domain Models**: `OCRExtractor` tạo ra `Receipt` và danh sách `ReceiptItem`. Đầu ra (`ToolResult.data["receipt"]`) được chuyển tiếp sang `Embedder`. |
 
 ---
@@ -542,7 +542,7 @@ classDiagram
 
 **Mô tả:**
 - `VisionDetector` dùng YOLOv11 để phát hiện và cắt vùng hóa đơn từ ảnh gốc (hiện là stub).
-- `OCRExtractor` nhận ảnh đã crop, dùng PaddleOCR trích xuất và parse thành `Receipt` có cấu trúc (hiện là stub).
+- `OCRExtractor` nhận ảnh đã crop, dùng VietOCR trích xuất và parse thành `Receipt` có cấu trúc (hiện là stub).
 
 ---
 
