@@ -5,7 +5,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.routes import auth, feedback, insights, receipts, transactions
+from src.api.routes import auth, feedback, insights, receipts, transactions, investment
 from src.core.config import get_settings
 from src.core.logging import configure_logging
 
@@ -62,6 +62,7 @@ def create_app() -> FastAPI:
     app.include_router(transactions.router)
     app.include_router(feedback.router)
     app.include_router(insights.router)
+    app.include_router(investment.router)
 
     return app
 

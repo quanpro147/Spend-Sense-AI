@@ -212,3 +212,125 @@ async function fetchWithFallback(
     `Lỗi gốc: ${lastError instanceof Error ? lastError.message : "Failed to fetch"}`,
   );
 }
+
+
+// ---------------------------------------------------------------------------
+// Investment APIs
+// ---------------------------------------------------------------------------
+
+export interface InvestmentProfile {
+  id: string;
+  user_id: string;
+  risk_appetite: string;
+  capital: number;
+  goal: string;
+  updated_at: string;
+}
+
+export interface InvestmentAsset {
+  id: string;
+  user_id: string;
+  symbol: string;
+  name: string;
+  type: 'stock' | 'gold' | 'saving' | 'crypto';
+  quantity: number;
+  purchase_price: number;
+  current_price?: number;
+  value?: number;
+  profit?: number;
+  profit_percent?: number;
+  color: string;
+  updated_at: string;
+}
+
+export interface ScenarioResult {
+  id: string;
+  name: string;
+  simulated_value: number;
+  loss_value: number;
+  loss_percent: number;
+}
+
+export interface HedgingStrategy {
+  asset: string;
+  action: string;
+  amount: number;
+  reasoning: string;
+}
+
+export interface StressTestResult {
+  portfolio_value: number;
+  total_capital: number;
+  idle_cash: number;
+  vulnerability_score: number;
+  diversification_score: number;
+  worst_scenario: string;
+  worst_loss_percent: number;
+  scenarios: ScenarioResult[];
+  assets: InvestmentAsset[];
+  overall_analysis: string;
+  hedging_strategies: HedgingStrategy[];
+}
+
+export async function getInvestmentProfile(): Promise<InvestmentProfile> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  return request<InvestmentProfile>("/investment/profile", {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+}
+
+export async function saveInvestmentProfile(payload: {
+  risk_appetite: string;
+  capital: number;
+  goal: string;
+}): Promise<InvestmentProfile> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  return request<InvestmentProfile>("/investment/profile", {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getPortfolio(): Promise<InvestmentAsset[]> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  return request<InvestmentAsset[]>("/investment/portfolio", {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+}
+
+export async function addAsset(payload: {
+  symbol: string;
+  name: string;
+  type: string;
+  quantity: number;
+  purchase_price: number;
+  color?: string;
+}): Promise<InvestmentAsset> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  return request<InvestmentAsset>("/investment/portfolio", {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteAsset(assetId: string): Promise<void> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const response = await fetchWithFallback(`/investment/portfolio/${assetId}`, {
+    method: "DELETE",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Delete asset failed: ${response.status}`);
+  }
+}
+
+export async function getStressTest(): Promise<StressTestResult> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  return request<StressTestResult>("/investment/stress-test", {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+}
+

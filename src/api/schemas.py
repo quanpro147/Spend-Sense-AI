@@ -196,3 +196,81 @@ class InsightListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# ---------------------------------------------------------------------------
+# Investment schemas
+# ---------------------------------------------------------------------------
+
+class InvestmentProfileRequest(BaseModel):
+    risk_appetite: str
+    capital: float
+    goal: str = ""
+
+
+class InvestmentProfileResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    risk_appetite: str
+    capital: float
+    goal: str
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class InvestmentAssetRequest(BaseModel):
+    symbol: str
+    name: str
+    type: str  # stock, gold, saving, crypto
+    quantity: float
+    purchase_price: float
+    color: str = "#5BAAEC"
+
+
+class InvestmentAssetResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    symbol: str
+    name: str
+    type: str
+    quantity: float
+    purchase_price: float
+    current_price: float | None = None
+    value: float | None = None
+    profit: float | None = None
+    profit_percent: float | None = None
+    color: str
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class HedgingStrategyResponse(BaseModel):
+    asset: str
+    action: str
+    amount: float
+    reasoning: str
+
+
+class ScenarioResultResponse(BaseModel):
+    id: str
+    name: str
+    simulated_value: float
+    loss_value: float
+    loss_percent: float
+
+
+class StressTestResponse(BaseModel):
+    portfolio_value: float
+    total_capital: float
+    idle_cash: float
+    vulnerability_score: float
+    diversification_score: float
+    worst_scenario: str
+    worst_loss_percent: float
+    scenarios: list[ScenarioResultResponse]
+    assets: list[InvestmentAssetResponse]
+    overall_analysis: str
+    hedging_strategies: list[HedgingStrategyResponse]
+
