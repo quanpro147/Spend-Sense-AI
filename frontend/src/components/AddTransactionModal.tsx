@@ -14,6 +14,7 @@ import {
   analyzeReceipt,
   createTransaction,
   type AnalyzeReceiptResult,
+  type CreateTransactionPayload,
   type DetectedField,
   type ReceiptDraftItem,
 } from "@/lib/api";
@@ -140,6 +141,39 @@ function dominantCategory(items: ReviewItem[]): string {
   return Array.from(totals.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "khac";
 }
 
+function itemToTransactionPayload(
+  item: ReviewItem,
+  priceMode: PriceMode,
+  transactionDate: string,
+  merchant: string,
+  txType: TxType,
+): CreateTransactionPayload | null {
+  const name = item.name.trim();
+  const amount = netLineTotal(item, priceMode);
+  if (!name || amount <= 0) return null;
+
+  const quantity = priceMode === "line" ? 1 : item.quantity || 1;
+  const unitPrice = quantity > 0 ? amount / quantity : amount;
+
+  return {
+    type: txType,
+    amount,
+    currency: "VND",
+    category: item.category,
+    description: name,
+    merchant,
+    transaction_date: transactionDate || null,
+    receipt_items: [
+      {
+        name,
+        quantity,
+        unit_price: unitPrice,
+        category: item.category,
+      },
+    ],
+  };
+}
+
 export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionModalProps>) {
   const [step, setStep] = useState<Step>("form");
   const [txType, setTxType] = useState<TxType>("expense");
@@ -161,6 +195,7 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
   const [editingValue, setEditingValue] = useState("");
   const [priceMode, setPriceMode] = useState<PriceMode>("unit");
+  const [savedTransactionCount, setSavedTransactionCount] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -201,6 +236,7 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
     setEditingCell(null);
     setEditingValue("");
     setPriceMode("unit");
+    setSavedTransactionCount(0);
     stopCamera();
     onClose();
   }, [onClose, stopCamera]);
@@ -385,30 +421,34 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
       : itemName.trim()
         ? [{ id: crypto.randomUUID(), name: itemName.trim(), quantity: 1, unit_price: total, discount: 0, category, source_token_ids: { name: null, quantity: null, unit_price: null, discount: null } }]
         : [];
-    const transactionName = itemRows.map((item) => item.name).join(", ");
+    const merchant = analysis?.suggested_transaction?.merchant || analysis?.receipt?.merchant || "";
     setIsSaving(true);
     setApiError("");
     try {
-      await createTransaction({
-        type: txType,
-        amount: total,
-        currency: "VND",
-        category,
-        description: transactionName,
-        merchant: "",
-        transaction_date: transactionDate || null,
-        receipt_items: itemRows
-          .map((item) => {
-            const netTotal = netLineTotal(item, priceMode);
-            const quantity = priceMode === "line" ? 1 : item.quantity;
-            return {
-            name: item.name,
-            quantity,
-            unit_price: quantity > 0 ? netTotal / quantity : netTotal,
-            category: item.category,
-            };
-          }),
-      });
+      if (itemRows.length) {
+        const payloads = itemRows
+          .map((item) => itemToTransactionPayload(item, priceMode, transactionDate, merchant, txType))
+          .filter((payload): payload is CreateTransactionPayload => Boolean(payload));
+
+        if (!payloads.length) {
+          throw new Error("Không có dòng hàng hợp lệ để lưu.");
+        }
+
+        await Promise.all(payloads.map((payload) => createTransaction(payload)));
+        setSavedTransactionCount(payloads.length);
+      } else {
+        await createTransaction({
+          type: txType,
+          amount: total,
+          currency: "VND",
+          category,
+          description: itemName.trim(),
+          merchant,
+          transaction_date: transactionDate || null,
+          receipt_items: [],
+        });
+        setSavedTransactionCount(1);
+      }
       setAmount(formatMoneyInput(total));
       setStep("success");
       setTimeout(() => resetAndClose(), 1400);
@@ -452,7 +492,9 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
             </div>
             <p className="font-heading text-lg font-semibold text-stitch-on-surface">Đã lưu giao dịch</p>
             <p className="text-base text-stitch-on-surface-variant text-center">
-              Giao dịch và các dòng hàng đã được gửi lên backend.
+              {savedTransactionCount > 1
+                ? `${savedTransactionCount} giao dịch đã được gửi lên backend.`
+                : "Giao dịch đã được gửi lên backend."}
             </p>
           </div>
         )}
@@ -715,13 +757,11 @@ export function AddTransactionModal({ open, onClose }: Readonly<AddTransactionMo
                 </button>
               ) : (
                 <button
-                  onClick={() => {
-                    setAmount(formatMoneyInput(computedTotal));
-                    setCategory(dominantCategory(reviewItems));
-                    setStep("form");
-                  }}
-                  className="flex-1 btn-primary"
+                  onClick={handleSave}
+                  disabled={!computedTotal || isSaving}
+                  className="flex-1 btn-primary disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
+                  {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
                   Áp dụng vào giao dịch
                 </button>
               )}

@@ -93,6 +93,8 @@ export interface CreateTransactionPayload {
   }>;
 }
 
+export type UpdateTransactionPayload = Partial<Omit<CreateTransactionPayload, "receipt_items">>;
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetchWithFallback(path, {
     ...init,
@@ -153,6 +155,14 @@ export async function createTransaction(payload: CreateTransactionPayload): Prom
     headers: {
       Authorization: `Bearer ${token}`,
     },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateTransaction(transactionId: string, payload: UpdateTransactionPayload): Promise<TransactionRecord> {
+  return request<TransactionRecord>(`/transactions/${transactionId}`, {
+    method: "PATCH",
+    headers: authHeader(),
     body: JSON.stringify(payload),
   });
 }
@@ -359,6 +369,166 @@ export interface TransactionRecord {
   updated_at: string;
 }
 
+export type ReportRange = "today" | "7d";
+
+export interface ReportCategoryBreakdown {
+  category: string;
+  amount: number;
+  percent: number;
+}
+
+export interface ReportTransaction {
+  id: string;
+  type: "expense" | "income";
+  amount: number;
+  category: string;
+  description: string;
+  merchant: string;
+  transaction_date: string | null;
+}
+
+export interface ReportInvestmentAsset {
+  symbol: string;
+  name: string;
+  type: string;
+  value: number;
+  invested: number;
+  profit: number;
+  profit_percent: number;
+}
+
+export interface ReportInvestmentSummary {
+  status: string;
+  total_invested: number;
+  current_value: number;
+  profit: number;
+  profit_percent: number;
+  assessment: string;
+  assets: ReportInvestmentAsset[];
+}
+
+export interface ReportGoalProgress {
+  title: string;
+  emoji: string;
+  target_amount: number;
+  current_amount: number;
+  progress_percent: number;
+  status: string;
+}
+
+export interface ReportAiReview {
+  summary: string;
+  observations: string[];
+  suggested_actions: string[];
+  source: "gemini" | "fallback";
+}
+
+export interface FinancialReport {
+  range: ReportRange;
+  title: string;
+  start_date: string;
+  end_date: string;
+  income: number;
+  expense: number;
+  net: number;
+  savings: number;
+  saving_rate: number;
+  category_breakdown: ReportCategoryBreakdown[];
+  largest_transactions: ReportTransaction[];
+  investment: ReportInvestmentSummary;
+  goals: ReportGoalProgress[];
+  ai_review: ReportAiReview;
+}
+
+export interface MarketSymbol {
+  symbol: string;
+  name: string;
+  market: string;
+  asset_class: string;
+  price: number | null;
+  change: number | null;
+  change_percent: number | null;
+  volume: number | null;
+  updated_at: string | null;
+  currency: string;
+  source: string;
+  error: string | null;
+}
+
+export interface MarketNewsItem {
+  category: string;
+  title: string;
+  summary: string;
+  url: string;
+  published_at: string | null;
+  source: string;
+}
+
+export interface CryptoMarketItem {
+  symbol: string;
+  name: string;
+  price_usd: number | null;
+  change_percent_24h: number | null;
+  market_cap_usd: number | null;
+  volume_24h_usd: number | null;
+  source: string;
+}
+
+export interface GlobalMarketItem {
+  symbol: string;
+  price: number | null;
+  change: number | null;
+  change_percent: number | null;
+  currency: string;
+  as_of: string | null;
+  source: string;
+}
+
+export interface MarketContext {
+  as_of: string;
+  vietnam_market: {
+    source: string;
+    breadth: {
+      available: number;
+      missing: number;
+      advancing: number;
+      declining: number;
+      unchanged: number;
+      average_change_percent: number | null;
+    };
+    top_gainers: MarketSymbol[];
+    top_losers: MarketSymbol[];
+  };
+  crypto_market: {
+    source: string;
+    majors: CryptoMarketItem[];
+    top_gainers: CryptoMarketItem[];
+    top_losers: CryptoMarketItem[];
+    error: string | null;
+  };
+  global_market: {
+    source: string;
+    indices: GlobalMarketItem[];
+    change_basis?: string;
+    error: string | null;
+  };
+  news: {
+    source: string;
+    items: MarketNewsItem[];
+    error: string | null;
+  };
+  source_quality: {
+    missing_or_partial: string[];
+    policy: string;
+  };
+}
+
+export interface MarketIntelligence {
+  updated_at: string;
+  symbols: MarketSymbol[];
+  market_context: MarketContext;
+}
+
 interface TransactionListResponse {
   items: TransactionRecord[];
   total: number;
@@ -366,12 +536,44 @@ interface TransactionListResponse {
   offset: number;
 }
 
-export async function listTransactions(limit = 200, offset = 0): Promise<TransactionRecord[]> {
+export async function listTransactions(limit = 200, offset = 0, includeTotal = false): Promise<TransactionRecord[]> {
   const res = await request<TransactionListResponse>(
-    `/transactions?limit=${limit}&offset=${offset}`,
+    `/transactions?limit=${limit}&offset=${offset}&include_total=${includeTotal}`,
     { headers: authHeader() },
   );
   return res.items;
+}
+
+export async function getFinancialReport(range: ReportRange): Promise<FinancialReport> {
+  return request<FinancialReport>(`/reports/summary?range=${range}`, {
+    headers: authHeader(),
+  });
+}
+
+export async function getMarketIntelligence(): Promise<MarketIntelligence> {
+  return request<MarketIntelligence>("/market/overview", {
+    headers: authHeader(),
+  });
+}
+
+export type VNMarketGroup = "all" | "vn30" | "bank" | "securities" | "real_estate" | "retail" | "steel";
+export type VNMarketSort =
+  | "symbol_desc"
+  | "symbol_asc"
+  | "change_desc"
+  | "change_asc"
+  | "percent_desc"
+  | "percent_asc"
+  | "price_desc"
+  | "price_asc";
+
+export async function getVNStocks(
+  group: VNMarketGroup = "all",
+  sort: VNMarketSort = "percent_desc",
+  limit = 10,
+): Promise<MarketSymbol[]> {
+  const params = new URLSearchParams({ group, sort, limit: String(limit) });
+  return request<MarketSymbol[]>(`/market/vn-stocks?${params.toString()}`);
 }
 
 export interface InsightRecord {
@@ -391,11 +593,20 @@ interface InsightListResponse {
   offset: number;
 }
 
-export async function listInsights(limit = 50, offset = 0): Promise<InsightRecord[]> {
-  const res = await request<InsightListResponse>(
+export async function listInsights(limit = 50, offset = 0, timeoutMs = 2000): Promise<InsightRecord[]> {
+  const response = await fetchWithFallback(
     `/insights?limit=${limit}&offset=${offset}`,
     { headers: authHeader() },
+    {
+      timeoutMs,
+      timeoutMessage: "Bỏ qua phân tích AI vì backend insight phản hồi chậm.",
+    },
   );
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `List insights failed: ${response.status}`);
+  }
+  const res = await response.json() as InsightListResponse;
   return res.items;
 }
 

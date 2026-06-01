@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from src.api.schemas import HealthResponse, InsightListResponse, InsightResponse
 from src.auth.dependencies import get_current_user
 from src.cache.vector_store import get_insight, list_insights
+from src.core.config import get_settings
 from src.db.models import User
 
 router = APIRouter(tags=["insights"])
@@ -19,12 +20,12 @@ async def list_user_insights(
     offset: int = Query(default=0, ge=0),
     current_user: User = Depends(get_current_user),
 ) -> InsightListResponse:
+    if not get_settings().semantic_cache_enabled:
+        return InsightListResponse(items=[], total=0, limit=limit, offset=offset)
+
     result = list_insights(user_id=str(current_user.id), limit=limit, offset=offset)
     if result.failed:
-        raise HTTPException(
-            status_code=500,
-            detail=result.error_hint or "Failed to list insights",
-        )
+        return InsightListResponse(items=[], total=0, limit=limit, offset=offset)
     items: list = result.data or []
     return InsightListResponse(
         items=[InsightResponse.from_insight(i) for i in items],

@@ -5,13 +5,16 @@ import {
   BarChart3,
   Target,
   TrendingUp,
+  LineChart,
   Settings,
   Plus,
+  FileText,
   Sparkles,
   LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AddTransactionModal } from "@/components/AddTransactionModal";
+import { FinancialReportModal } from "@/components/FinancialReportModal";
 import { NotificationBell } from "@/components/layout/NotificationBell";
 import { useAuth } from "@/lib/auth";
 
@@ -20,10 +23,11 @@ const navItems = [
   { label: "Phân Tích", icon: BarChart3, path: "/analytics" },
   { label: "Mục Tiêu", icon: Target, path: "/goals" },
   { label: "Đầu Tư", icon: TrendingUp, path: "/investment" },
+  { label: "Thị Trường", icon: LineChart, path: "/market" },
   { label: "Cài Đặt", icon: Settings, path: "/settings" },
 ];
 
-export function Sidebar({ onAddTx }: Readonly<{ onAddTx: () => void }>) {
+export function Sidebar({ onAddTx, onReport }: Readonly<{ onAddTx: () => void; onReport: () => void }>) {
   const { pathname } = useLocation();
 
   return (
@@ -68,6 +72,10 @@ export function Sidebar({ onAddTx }: Readonly<{ onAddTx: () => void }>) {
       </div>
 
       {/* CTA */}
+      <button onClick={onReport} className="btn-outline w-full flex items-center justify-center gap-2 mb-3">
+        <FileText className="w-5 h-5" />
+        Nhận Báo Cáo
+      </button>
       <button onClick={onAddTx} className="btn-primary w-full flex items-center justify-center gap-2">
         <Plus className="w-5 h-5" />
         Thêm Giao Dịch
@@ -133,7 +141,7 @@ export function TopBar({ onAddTx }: Readonly<{ onAddTx: () => void }>) {
 export function BottomNav({ onAddTx }: Readonly<{ onAddTx: () => void }>) {
   const { pathname } = useLocation();
   const visibleItems = navItems.slice(0, 2);
-  const visibleItems2 = navItems.slice(3);
+  const visibleItems2 = navItems.slice(3, 5);
 
   return (
     <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-stitch-outline-variant z-30 flex items-center">
@@ -185,13 +193,15 @@ export function BottomNav({ onAddTx }: Readonly<{ onAddTx: () => void }>) {
 
 export function NavigationProvider() {
   const [modalOpen, setModalOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
 
   return (
     <>
-      <Sidebar onAddTx={() => setModalOpen(true)} />
+      <Sidebar onAddTx={() => setModalOpen(true)} onReport={() => setReportOpen(true)} />
       <TopBar onAddTx={() => setModalOpen(true)} />
       <BottomNav onAddTx={() => setModalOpen(true)} />
       <AddTransactionModal open={modalOpen} onClose={() => setModalOpen(false)} />
+      <FinancialReportModal open={reportOpen} onClose={() => setReportOpen(false)} />
     </>
   );
 }

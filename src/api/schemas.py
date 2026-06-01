@@ -37,6 +37,16 @@ class TransactionCreateRequest(BaseModel):
     receipt_items: list[ReceiptItemInput] = Field(default_factory=list)
 
 
+class TransactionUpdateRequest(BaseModel):
+    type: str | None = Field(default=None, pattern="^(expense|income)$")
+    amount: float | None = Field(default=None, gt=0)
+    currency: str | None = None
+    category: str | None = None
+    description: str | None = None
+    merchant: str | None = None
+    transaction_date: date | None = None
+
+
 # ---------------------------------------------------------------------------
 # Response schemas
 # ---------------------------------------------------------------------------
@@ -185,6 +195,104 @@ class TransactionListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# ---------------------------------------------------------------------------
+# Financial reports
+# ---------------------------------------------------------------------------
+
+class ReportCategoryBreakdownResponse(BaseModel):
+    category: str
+    amount: float
+    percent: float
+
+
+class ReportTransactionResponse(BaseModel):
+    id: UUID
+    type: str
+    amount: float
+    category: str
+    description: str
+    merchant: str
+    transaction_date: date | None = None
+
+
+class ReportInvestmentAssetResponse(BaseModel):
+    symbol: str
+    name: str
+    type: str
+    value: float
+    invested: float
+    profit: float
+    profit_percent: float
+
+
+class ReportInvestmentSummaryResponse(BaseModel):
+    status: str
+    total_invested: float
+    current_value: float
+    profit: float
+    profit_percent: float
+    assessment: str
+    assets: list[ReportInvestmentAssetResponse] = Field(default_factory=list)
+
+
+class ReportGoalProgressResponse(BaseModel):
+    title: str
+    emoji: str
+    target_amount: float
+    current_amount: float
+    progress_percent: float
+    status: str
+
+
+class ReportAiReviewResponse(BaseModel):
+    summary: str
+    observations: list[str] = Field(default_factory=list)
+    suggested_actions: list[str] = Field(default_factory=list)
+    source: str = "fallback"
+
+
+class FinancialReportResponse(BaseModel):
+    range: str
+    title: str
+    start_date: date
+    end_date: date
+    income: float
+    expense: float
+    net: float
+    savings: float
+    saving_rate: float
+    category_breakdown: list[ReportCategoryBreakdownResponse] = Field(default_factory=list)
+    largest_transactions: list[ReportTransactionResponse] = Field(default_factory=list)
+    investment: ReportInvestmentSummaryResponse
+    goals: list[ReportGoalProgressResponse] = Field(default_factory=list)
+    ai_review: ReportAiReviewResponse
+
+
+# ---------------------------------------------------------------------------
+# Market intelligence
+# ---------------------------------------------------------------------------
+
+class MarketSymbolResponse(BaseModel):
+    symbol: str
+    name: str
+    market: str
+    asset_class: str
+    price: float | None = None
+    change: float | None = None
+    change_percent: float | None = None
+    volume: float | None = None
+    updated_at: datetime | None = None
+    currency: str = "VND"
+    source: str = "fallback"
+    error: str | None = None
+
+
+class MarketIntelligenceResponse(BaseModel):
+    updated_at: datetime
+    symbols: list[MarketSymbolResponse] = Field(default_factory=list)
+    market_context: dict = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

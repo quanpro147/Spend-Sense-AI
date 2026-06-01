@@ -5,6 +5,7 @@ import { DashboardPage } from "@/pages/DashboardPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
 import { GoalsPage } from "@/pages/GoalsPage";
 import { InvestmentPage } from "@/pages/InvestmentPage";
+import { MarketPage } from "@/pages/MarketPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { LoginPage } from "@/pages/LoginPage";
 
@@ -25,6 +26,7 @@ function AuthGate() {
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="goals" element={<GoalsPage />} />
         <Route path="investment" element={<InvestmentPage />} />
+        <Route path="market" element={<MarketPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
     </Routes>

@@ -1,6 +1,6 @@
 # Project Status / Handoff
 
-Last updated: 2026-05-31
+Last updated: 2026-06-01
 Audience: Backend / Frontend / Full-stack / DevOps / DB engineer
 
 ---
@@ -30,6 +30,7 @@ Most important current behavior:
   - Optional: `Tên món / Thành tiền / Khuyến mãi / Danh mục`, where quantity is saved as `1`.
   - Discount OCR tokens such as `-8.400` are attached to the nearest item row and subtracted from the row total.
 - A new **Investment** feature provides real-time portfolio tracking (VN stocks, crypto, gold) and an AI-driven macro stress test with hedging recommendations.
+- A new **Market** tab provides a direct market-data dashboard. It does not call Gemini/LLM: it displays data from backend providers directly.
 - On startup the backend warms up the YOLO detector and VietOCR so the first receipt request is not penalized by cold model loading.
 
 ---
@@ -233,6 +234,41 @@ Added (2026-05-31):
 - Three tests: diversification score for a single asset (= 0), diversification for an even 4-type split (= 100), and a full stress-test calculation with a mocked profile/assets and patched Gemini call.
 - This is the first automated test in the repo. Other modules (vision, pipeline, auth, cache) remain untested, so the repo-wide `--cov` gate in `pyproject.toml` (80%) is not met yet.
 
+### Market Tab
+
+Implemented (2026-06-01):
+
+- New tab and route: `frontend/src/pages/MarketPage.tsx`, registered in `frontend/src/App.tsx` and navigation.
+- Backend route file: `src/api/routes/market.py`, registered in `main.py`.
+- Market context service: `src/services/market_context_service.py`.
+- The Market tab no longer calls Gemini/LLM. It renders the fetched/crawled market data directly.
+- Active backend endpoints:
+  - `GET /market/overview`
+  - `GET /market/vn-stocks`
+  - `GET /market/vn-index`
+- Removed market AI chat endpoint from active routes.
+- Data sources without API keys:
+  - Vietnam stocks: `vnstock`/existing backend quote service, with fallback behavior.
+  - Crypto: CoinGecko public API.
+  - Global indices/commodities: Stooq public CSV (`S&P 500`, `NASDAQ`, `DOW JONES`, `GOLD`, `USD INDEX`).
+  - News: Vietstock RSS feeds.
+- Frontend renders:
+  - Market source/summary stats.
+  - Global market panel.
+  - Crypto data panel.
+  - Vietstock news cards.
+  - Vietnam stock table with clickable column sorting.
+  - TradingView Crypto Market and S&P 500 heatmap widgets.
+- Frontend market data is cached through `useApiData`:
+  - `/market/overview`: 5 minutes.
+  - Vietnam stock table by group/sort: 2 minutes.
+
+Known limitations:
+
+- TradingView widgets are visual-only and are not used as backend data sources.
+- Public providers can rate-limit or fail; the UI shows partial-source status instead of invoking AI fallback.
+- Vietnam market data is still limited by `vnstock`/provider coverage and the current predefined groups.
+
 ### Database Startup Behavior
 
 - `main.py` does not initialize database tables at startup (only model warm-up runs in `lifespan`).
@@ -280,7 +316,9 @@ Important files:
 - `src/api/routes/feedback.py` - Insight feedback (confirm/reject) endpoint.
 - `src/api/routes/insights.py` - Health check and ChromaDB-backed insights endpoints.
 - `src/api/routes/investment.py` - Investment profile, portfolio CRUD, and stress-test endpoints.
+- `src/api/routes/market.py` - Market dashboard endpoints.
 - `src/core/market_data.py` - Real-time market prices (vnstock / Binance / SJC), normalized to VND.
+- `src/services/market_context_service.py` - Market dashboard context from vnstock/backend quotes, CoinGecko, Stooq, and Vietstock RSS.
 - `src/core/stress_tester.py` - Deterministic market-shock simulation + Gemini hedging advisory.
 - `src/pipeline.py` - Receipt analysis pipeline.
 - `src/vision/detector.py` - YOLO detector with local/Hugging Face model loading.
@@ -461,6 +499,33 @@ Known limitations:
 - Money uses `Float` (`capital`, `quantity`, `purchase_price`); should become `Numeric`.
 - The portfolio growth curve on the frontend is still mock history.
 - External market-data sources are subject to network latency and rate limiting; all have hardcoded fallbacks.
+
+### 4.8 Market Dashboard
+
+Status: **Implemented (direct data dashboard, no LLM calls)**
+
+Endpoints:
+
+- `GET /market/overview` — authenticated. Returns current market context and source status.
+- `GET /market/vn-stocks` — authenticated. Returns Vietnam stock quote rows by group/sort.
+- `GET /market/vn-index` — authenticated. Returns VNINDEX quote if available.
+
+Behavior:
+
+- `/market/overview` does not query personal finance data and does not call Gemini.
+- The frontend displays fetched data directly instead of asking an LLM to summarize it.
+- Sources:
+  - Vietnam quotes from backend market service (`vnstock` first when no FireAnt key).
+  - Crypto majors from CoinGecko public API.
+  - Global indices/commodities from Stooq public CSV.
+  - Financial news from Vietstock RSS.
+- Market data is cached on both the frontend hook layer and the backend service layer to reduce reload time when switching tabs.
+
+Known limitations:
+
+- Public data providers can fail or return delayed values.
+- Global market `change` and `change_percent` from Stooq are estimated against the current session open.
+- No AI market commentary or chat is currently active by design.
 
 ---
 
@@ -687,6 +752,53 @@ Returns `204 No Content`. Returns `404` if the asset is not owned by the user.
 }
 ```
 
+### Market
+
+All market endpoints require `Authorization: Bearer <jwt>`.
+
+#### `GET /market/overview`
+
+Returns direct market context:
+
+```json
+{
+  "updated_at": "datetime",
+  "symbols": [ /* MarketSymbolResponse */ ],
+  "market_context": {
+    "as_of": "datetime",
+    "vietnam_market": {
+      "source": "vnstock/fireant/vndirect",
+      "breadth": {
+        "available": 10,
+        "missing": 0,
+        "advancing": 6,
+        "declining": 4,
+        "unchanged": 0,
+        "average_change_percent": 0.6
+      },
+      "top_gainers": [],
+      "top_losers": []
+    },
+    "crypto_market": { "source": "coingecko", "majors": [], "top_gainers": [], "top_losers": [], "error": null },
+    "global_market": { "source": "stooq_public_csv", "indices": [], "error": null },
+    "news": { "source": "vietstock_rss", "items": [], "error": null },
+    "source_quality": { "missing_or_partial": [], "policy": "..." }
+  }
+}
+```
+
+#### `GET /market/vn-stocks`
+
+Query params:
+
+- `group`: `all` | `vn30` | `bank` | `securities` | `real_estate` | `retail` | `steel`
+- `sort`: `symbol_desc` | `symbol_asc` | `change_desc` | `change_asc` | `percent_desc` | `percent_asc` | `price_desc` | `price_asc`
+- `limit`: `1`–`50`
+
+#### `GET /market/vn-index`
+
+Returns one `MarketSymbolResponse` for `VNINDEX` if available.
+
 ---
 
 ## 7) Environment Variables
@@ -782,6 +894,9 @@ spendsense_user
 - Password hashing smoke test passed with pinned `bcrypt==4.0.1` and `passlib==1.7.4`.
 - `uv run pytest tests/test_investment.py` — 3 passed (2026-05-31).
 - `python -m compileall main.py src` passed (2026-05-31).
+- `python -m compileall src\api\schemas.py src\api\routes\market.py` passed (2026-06-01).
+- `npm run build` passed after Market tab cleanup (2026-06-01).
+- Active market routes verified: `/market/vn-stocks`, `/market/vn-index`, `/market/overview` (2026-06-01).
 
 Known test gap:
 
@@ -809,6 +924,7 @@ Known test gap:
 - Google OAuth setup must be done manually in Google Cloud.
 - Investment portfolio growth curve is mock history (frontend only).
 - Investment market data depends on external sources (vnstock / Binance / SJC) with hardcoded fallbacks; live prices can be stale or rate-limited.
+- Market dashboard depends on public external sources (vnstock/backend quotes, CoinGecko, Stooq, Vietstock RSS); values can be delayed, missing, or rate-limited.
 
 ### P2
 

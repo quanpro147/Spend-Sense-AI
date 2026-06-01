@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, Query, status
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.schemas import TransactionCreateRequest, TransactionListResponse, TransactionResponse
+from src.api.schemas import TransactionCreateRequest, TransactionListResponse, TransactionResponse, TransactionUpdateRequest
 from src.auth.dependencies import get_current_user
 from src.db.base import get_db
 from src.db.models import ReceiptItemRecord, ReceiptRecord, Transaction, User
@@ -58,14 +60,36 @@ async def create_transaction(
     return TransactionResponse.from_transaction(transaction)
 
 
+@router.patch("/{transaction_id}", response_model=TransactionResponse)
+async def update_transaction(
+    transaction_id: UUID,
+    body: TransactionUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TransactionResponse:
+    transaction = await db.scalar(
+        select(Transaction).where(Transaction.id == transaction_id, Transaction.user_id == current_user.id)
+    )
+    if transaction is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+
+    updates = body.model_dump(exclude_unset=True)
+    for field, value in updates.items():
+        setattr(transaction, field, value)
+
+    await db.commit()
+    await db.refresh(transaction)
+    return TransactionResponse.from_transaction(transaction)
+
+
 @router.get("", response_model=TransactionListResponse)
 async def list_transactions(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    include_total: bool = Query(default=True),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> TransactionListResponse:
-    total = await db.scalar(select(func.count()).select_from(Transaction).where(Transaction.user_id == current_user.id))
     result = await db.scalars(
         select(Transaction)
         .where(Transaction.user_id == current_user.id)
@@ -74,4 +98,7 @@ async def list_transactions(
         .offset(offset)
     )
     items = [TransactionResponse.from_transaction(txn) for txn in result.all()]
-    return TransactionListResponse(items=items, total=total or 0, limit=limit, offset=offset)
+    total = len(items)
+    if include_total:
+        total = await db.scalar(select(func.count()).select_from(Transaction).where(Transaction.user_id == current_user.id)) or 0
+    return TransactionListResponse(items=items, total=total, limit=limit, offset=offset)

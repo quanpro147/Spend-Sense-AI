@@ -57,6 +57,26 @@ Chỉ trả JSON hợp lệ theo cấu trúc:
 
 Không thêm giải thích. Nếu không chắc, dùng "khac"."""
 
+_FINANCIAL_REPORT_PROMPT_TEMPLATE = """Bạn là AI Copilot tài chính cá nhân.
+Hãy viết nhận xét cá nhân hóa bằng tiếng Việt dựa trên dữ liệu báo cáo dưới đây.
+
+Yêu cầu:
+- Không nhắc tên/email người dùng.
+- Không bịa dữ liệu ngoài JSON.
+- Nhận xét cụ thể theo số liệu, danh mục, giao dịch, mục tiêu và đầu tư.
+- Nếu thiếu dữ liệu đầu tư hoặc mục tiêu, nói rõ và gợi ý bước tiếp theo.
+- Trả JSON hợp lệ, không thêm markdown.
+
+Dữ liệu:
+{report_json}
+
+Trả đúng cấu trúc:
+{{
+  "summary": "<2-3 câu tóm tắt tình hình tài chính>",
+  "observations": ["<nhận xét 1>", "<nhận xét 2>", "<nhận xét 3>"],
+  "suggested_actions": ["<hành động cụ thể 1>", "<hành động cụ thể 2>", "<hành động cụ thể 3>"]
+}}"""
+
 
 def generate_insight(receipt: Receipt) -> ToolResult:
     """
@@ -164,6 +184,37 @@ def classify_receipt_items(items: list[dict[str, Any]]) -> ToolResult:
         data=categories,
         next_actions=["Let user review item categories"],
     )
+
+
+def generate_financial_report_review(report_payload: dict[str, Any]) -> ToolResult:
+    """Generate a personalized report review from pre-aggregated finance data."""
+    import json
+
+    prompt = _FINANCIAL_REPORT_PROMPT_TEMPLATE.format(
+        report_json=json.dumps(report_payload, ensure_ascii=False, default=str),
+    )
+    try:
+        raw_json = _call_gemini(
+            prompt,
+            response_schema=_financial_report_response_schema(),
+            timeout=15,
+            retries=0,
+        )
+        parsed = _parse_response(raw_json)
+    except NotImplementedError:
+        return ToolResult.warning(
+            summary="Gemini not configured — using fallback financial report review",
+            data={},
+            error_hint="GEMINI_API_KEY not set.",
+        )
+    except Exception as exc:
+        return ToolResult.warning(
+            summary="Gemini financial report generation failed",
+            data={},
+            error_hint=f"{type(exc).__name__}: {exc}",
+        )
+
+    return ToolResult.success("Financial report review generated", data=parsed)
 
 
 def _call_gemini(
@@ -332,6 +383,24 @@ def _item_category_response_schema() -> dict[str, Any]:
             },
         },
         "required": ["items"],
+    }
+
+
+def _financial_report_response_schema() -> dict[str, Any]:
+    return {
+        "type": "OBJECT",
+        "properties": {
+            "summary": {"type": "STRING"},
+            "observations": {
+                "type": "ARRAY",
+                "items": {"type": "STRING"},
+            },
+            "suggested_actions": {
+                "type": "ARRAY",
+                "items": {"type": "STRING"},
+            },
+        },
+        "required": ["summary", "observations", "suggested_actions"],
     }
 
 

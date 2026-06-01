@@ -1,11 +1,13 @@
+import { useMemo, useState } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, LineChart, Line,
 } from "recharts";
 import { formatCurrency } from "@/lib/utils";
-import { Filter } from "lucide-react";
-import { listTransactions } from "@/lib/api";
+import { Edit3, Filter, Loader2, X } from "lucide-react";
+import { listTransactions, updateTransaction, type TransactionRecord } from "@/lib/api";
 import { useApiData } from "@/hooks/useApiData";
+import { CATEGORY_META } from "@/lib/categories";
 import {
   deriveExpenseByCategory,
   deriveMonthlyTrend,
@@ -26,8 +28,166 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
+const categoryOptions = Object.entries(CATEGORY_META).map(([value, meta]) => ({
+  value,
+  label: meta.label,
+}));
+
+interface EditTransactionForm {
+  type: "expense" | "income";
+  amount: string;
+  category: string;
+  description: string;
+  transaction_date: string;
+}
+
+function toDateInputValue(txn: TransactionRecord): string {
+  return (txn.transaction_date ?? txn.created_at).slice(0, 10);
+}
+
+function EditTransactionModal({
+  transaction,
+  onClose,
+  onSaved,
+}: Readonly<{
+  transaction: TransactionRecord;
+  onClose: () => void;
+  onSaved: () => void;
+}>) {
+  const [form, setForm] = useState<EditTransactionForm>({
+    type: transaction.type,
+    amount: String(transaction.amount),
+    category: transaction.category,
+    description: transaction.description,
+    transaction_date: toDateInputValue(transaction),
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    const amount = Number(form.amount);
+    if (!form.description.trim()) {
+      setError("Vui lòng nhập tên giao dịch.");
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError("Vui lòng nhập số tiền hợp lệ.");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    try {
+      await updateTransaction(transaction.id, {
+        type: form.type,
+        amount,
+        currency: transaction.currency,
+        category: form.category,
+        description: form.description.trim(),
+        merchant: transaction.merchant,
+        transaction_date: form.transaction_date || null,
+      });
+      onSaved();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không thể cập nhật giao dịch.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="bg-white rounded-lg shadow-soft w-full max-w-lg p-lg space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="section-title">Chỉnh Sửa Giao Dịch</h3>
+          <button onClick={onClose} aria-label="Đóng" className="text-stitch-on-surface-variant hover:text-stitch-on-surface">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3">
+          <div className="flex gap-2 bg-stitch-surface-container p-1 rounded-lg">
+            {(["expense", "income"] as const).map((type) => (
+              <button
+                key={type}
+                onClick={() => setForm((current) => ({ ...current, type }))}
+                className={`flex-1 py-2 rounded-md text-sm font-semibold transition-all ${
+                  form.type === type
+                    ? "bg-white shadow-soft text-stitch-on-surface"
+                    : "text-stitch-on-surface-variant"
+                }`}
+              >
+                {type === "expense" ? "Chi" : "Thu"}
+              </button>
+            ))}
+          </div>
+
+          <label className="space-y-1.5">
+            <span className="text-label-caps text-stitch-on-surface-variant">Tên giao dịch</span>
+            <input
+              value={form.description}
+              onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
+              className="stitch-input"
+              placeholder="Tên món hoặc nguồn thu"
+            />
+          </label>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="space-y-1.5">
+              <span className="text-label-caps text-stitch-on-surface-variant">Số tiền</span>
+              <input
+                type="number"
+                min={0}
+                value={form.amount}
+                onChange={(event) => setForm((current) => ({ ...current, amount: event.target.value }))}
+                className="stitch-input"
+              />
+            </label>
+            <label className="space-y-1.5">
+              <span className="text-label-caps text-stitch-on-surface-variant">Ngày</span>
+              <input
+                type="date"
+                value={form.transaction_date}
+                onChange={(event) => setForm((current) => ({ ...current, transaction_date: event.target.value }))}
+                className="stitch-input"
+              />
+            </label>
+          </div>
+
+          <label className="space-y-1.5">
+            <span className="text-label-caps text-stitch-on-surface-variant">Danh mục</span>
+            <select
+              value={form.category}
+              onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))}
+              className="stitch-input"
+            >
+              {categoryOptions.map((category) => (
+                <option key={category.value} value={category.value}>{category.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {error && <p className="text-body-sm text-danger">{error}</p>}
+
+        <div className="flex justify-end gap-3 pt-2">
+          <button onClick={onClose} className="btn-outline">Hủy</button>
+          <button onClick={submit} disabled={saving} className="btn-primary flex items-center gap-2">
+            {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+            Lưu thay đổi
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AnalyticsPage() {
   const { data: transactions, loading, error, reload } = useApiData(() => listTransactions(), []);
+  const [editingTransaction, setEditingTransaction] = useState<TransactionRecord | null>(null);
+  const txns = transactions ?? [];
+  const transactionsById = useMemo(() => new Map(txns.map((txn) => [txn.id, txn])), [txns]);
 
   if (loading) {
     return <div className="py-20 text-center text-stitch-on-surface-variant">Đang tải dữ liệu phân tích…</div>;
@@ -41,7 +201,6 @@ export function AnalyticsPage() {
     );
   }
 
-  const txns = transactions ?? [];
   const expenseByCategory = deriveExpenseByCategory(txns);
   const weeklyExpense = deriveWeeklyExpense(txns);
   const monthlyTrend = deriveMonthlyTrend(txns);
@@ -97,8 +256,9 @@ export function AnalyticsPage() {
                   const r = or + 22;
                   const x = cx + r * Math.cos(-midAngle * R);
                   const y = cy + r * Math.sin(-midAngle * R);
-                  if (percent < 0.07) return null;
-                  return <text x={x} y={y} fill="#404750" textAnchor={x > cx ? "start" : "end"} dominantBaseline="central" fontSize={12}>{`${(percent * 100).toFixed(0)}%`}</text>;
+                  const normalizedPercent = percent > 1 ? percent : percent * 100;
+                  if (normalizedPercent < 7) return null;
+                  return <text x={x} y={y} fill="#404750" textAnchor={x > cx ? "start" : "end"} dominantBaseline="central" fontSize={12}>{`${normalizedPercent.toFixed(1)}%`}</text>;
                 }}
               >
                 {expenseByCategory.map((e) => <Cell key={e.name} fill={e.color} />)}
@@ -185,14 +345,34 @@ export function AnalyticsPage() {
                 <div className={`text-base font-bold tabular-nums ${txn.type === "income" ? "text-success" : "text-stitch-on-surface"}`}>
                   {txn.type === "income" ? "+" : ""}{formatCurrency(Math.abs(txn.amount))}
                 </div>
-                <span className={`text-label-caps px-2 py-0.5 rounded-full ${txn.type === "income" ? "bg-green-50 text-green-700" : "bg-stitch-surface-container text-stitch-on-surface-variant"}`}>
-                  {txn.type === "income" ? "Thu" : "Chi"}
-                </span>
+                <div className="flex items-center justify-end gap-2 mt-1">
+                  <span className={`text-label-caps px-2 py-0.5 rounded-full ${txn.type === "income" ? "bg-green-50 text-green-700" : "bg-stitch-surface-container text-stitch-on-surface-variant"}`}>
+                    {txn.type === "income" ? "Thu" : "Chi"}
+                  </span>
+                  <button
+                    onClick={() => {
+                      const raw = transactionsById.get(txn.id);
+                      if (raw) setEditingTransaction(raw);
+                    }}
+                    aria-label="Chỉnh sửa giao dịch"
+                    className="w-7 h-7 rounded-md border border-stitch-outline-variant text-stitch-on-surface-variant hover:text-brand-blue-dark hover:bg-blue-50 flex items-center justify-center transition-colors"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             </div>
           ))}
         </div>
       </div>
+
+      {editingTransaction && (
+        <EditTransactionModal
+          transaction={editingTransaction}
+          onClose={() => setEditingTransaction(null)}
+          onSaved={reload}
+        />
+      )}
     </div>
   );
 }

@@ -32,6 +32,37 @@ USD_VND_RATE = 25400.0
 DEFAULT_GOLD_PRICE_VND = 85000000.0  # 1 tael (lượng) of SJC gold
 
 
+def get_market_price_details(symbols: list[str]) -> dict[str, dict[str, Any]]:
+    """
+    Best-effort market prices with source metadata.
+
+    This keeps AI/UI from treating static fallback prices as live data.
+    """
+    results: dict[str, dict[str, Any]] = {}
+    stock_symbols: list[str] = []
+
+    for raw_sym in symbols:
+        sym = raw_sym.strip().upper()
+        if not sym:
+            continue
+        if sym in ("VNINDEX", "VN30", "HNXINDEX"):
+            results[raw_sym] = {"price": None, "source": "display_only"}
+        elif sym in ("GOLD", "SJC"):
+            price, source = fetch_gold_price_vnd_with_source()
+            results[raw_sym] = {"price": price, "source": source}
+        elif sym in DEFAULT_CRYPTO_PRICES_USD or sym.endswith("USDT"):
+            clean_crypto = sym.replace("USDT", "") if sym.endswith("USDT") else sym
+            price_usd, source = fetch_crypto_price_usd_with_source(clean_crypto)
+            results[raw_sym] = {"price": price_usd * USD_VND_RATE if price_usd else None, "source": source}
+        else:
+            stock_symbols.append(raw_sym)
+
+    if stock_symbols:
+        results.update(fetch_stock_price_details(stock_symbols))
+
+    return results
+
+
 def fetch_stock_prices(symbols: list[str]) -> dict[str, float]:
     """Fetch stock prices in VND from vnstock (KBS source)."""
     if not symbols:
@@ -73,6 +104,43 @@ def fetch_stock_prices(symbols: list[str]) -> dict[str, float]:
     return prices
 
 
+def fetch_stock_price_details(symbols: list[str]) -> dict[str, dict[str, Any]]:
+    if not symbols:
+        return {}
+    prices: dict[str, dict[str, Any]] = {}
+    try:
+        import vnstock
+
+        clean_symbols = [s.strip().upper() for s in symbols if s.strip()]
+        if not clean_symbols:
+            return {}
+
+        trading = vnstock.Trading(source='kbs')
+        df = trading.price_board(symbols_list=clean_symbols)
+
+        if df is not None and not df.empty:
+            records = df.to_dict(orient='records')
+            for row in records:
+                sym = str(row.get("symbol", "")).upper()
+                price = row.get("close_price") or row.get("reference_price") or row.get("open_price")
+                if price is not None:
+                    prices[sym] = {"price": float(price), "source": "vnstock"}
+
+        for s in clean_symbols:
+            if s not in prices:
+                fallback = DEFAULT_STOCK_PRICES.get(s)
+                prices[s] = {"price": fallback, "source": "fallback" if fallback is not None else "unavailable"}
+
+    except Exception as exc:
+        log.warning("market_data.fetch_stock_details.failed", error=str(exc))
+        for s in symbols:
+            sym = s.upper()
+            fallback = DEFAULT_STOCK_PRICES.get(sym)
+            prices[sym] = {"price": fallback, "source": "fallback" if fallback is not None else "unavailable"}
+
+    return prices
+
+
 def fetch_crypto_price_usd(symbol: str) -> float:
     """Fetch cryptocurrency price in USD from Binance public API."""
     symbol = symbol.strip().upper()
@@ -86,6 +154,20 @@ def fetch_crypto_price_usd(symbol: str) -> float:
     except Exception as exc:
         log.warning("market_data.fetch_crypto.failed", symbol=symbol, error=str(exc))
     return DEFAULT_CRYPTO_PRICES_USD.get(symbol, 0.0)
+
+
+def fetch_crypto_price_usd_with_source(symbol: str) -> tuple[float, str]:
+    symbol = symbol.strip().upper()
+    try:
+        url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}USDT"
+        headers = {"User-Agent": "SpendSense/1.0"}
+        response = httpx.get(url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            return float(data.get("price", 0.0)), "binance"
+    except Exception as exc:
+        log.warning("market_data.fetch_crypto_detail.failed", symbol=symbol, error=str(exc))
+    return DEFAULT_CRYPTO_PRICES_USD.get(symbol, 0.0), "fallback"
 
 
 def fetch_gold_price_vnd() -> float:
@@ -112,6 +194,25 @@ def fetch_gold_price_vnd() -> float:
     except Exception as exc:
         log.warning("market_data.fetch_gold.failed", error=str(exc))
     return DEFAULT_GOLD_PRICE_VND
+
+
+def fetch_gold_price_vnd_with_source() -> tuple[float, str]:
+    try:
+        url = "https://sjc.com.vn/xml/tygia.xml"
+        headers = {"User-Agent": "SpendSense/1.0"}
+        response = httpx.get(url, headers=headers, timeout=5)
+        if response.status_code == 200 and "<buy>" in response.text:
+            import re
+            text = response.text
+            match = re.search(r'<item[^>]*>.*?SJC.*?<buy>([\d\.,]+)</buy>', text, re.DOTALL | re.IGNORECASE)
+            if match:
+                buy_val = float(match.group(1).replace(",", ""))
+                if buy_val < 1000:
+                    return buy_val * 1000000, "sjc"
+                return buy_val, "sjc"
+    except Exception as exc:
+        log.warning("market_data.fetch_gold_detail.failed", error=str(exc))
+    return DEFAULT_GOLD_PRICE_VND, "fallback"
 
 
 def get_market_prices(symbols: list[str]) -> dict[str, float]:
