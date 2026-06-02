@@ -310,6 +310,19 @@ class InsightListResponse(BaseModel):
 # Investment schemas
 # ---------------------------------------------------------------------------
 
+class ParseAssetRequest(BaseModel):
+    text: str
+
+
+class ParseAssetResponse(BaseModel):
+    symbol: str
+    name: str
+    type: str  # stock, gold, saving, crypto
+    quantity: float
+    purchase_price: float
+    color: str
+
+
 class InvestmentProfileRequest(BaseModel):
     risk_appetite: str
     capital: float

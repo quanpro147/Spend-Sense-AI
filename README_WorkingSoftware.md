@@ -22,15 +22,19 @@ SpendSense AI đã triển khai hoàn thiện hai luồng use-case chính tập 
 
 ### 1.2 Luồng 3: Quản Lý Danh Mục Đầu Tư & AI Stress-Test Vĩ Mô (Investment & Shock Simulation)
 *   **Hồ Sơ Rủi Ro**: Cho phép người dùng tùy chỉnh khẩu vị rủi ro (Thận trọng, Trung bình, Tăng trưởng), thiết lập tổng vốn đầu tư và mục tiêu tài chính.
-*   **Quản Lý Tài Sản Thực Tế**:
+*   **Quản Lý Tài Sản Thực Tế & Trải Nghiệm Người Dùng Tối Ưu**:
     *   Kết nối trực tiếp thư viện **vnstock (KBS source)** lấy giá cổ phiếu Việt Nam (FPT, TCB, VNM,...) thời gian thực.
     *   Gọi API công khai của **Binance** lấy giá các đồng tiền mã hóa phổ biến (BTC, ETH,...) quy đổi sang VND.
     *   Truy vấn dữ liệu XML tỷ giá vàng **SJC** chính thức.
     *   Tự động tính toán tổng tài sản thực tế, lợi nhuận tạm tính (P/L) và tỷ lệ phần trăm biến động.
+    *   **Trợ Lý AI Quick-Add (AI Copilot)**: Phân tích mô tả giao dịch bằng ngôn ngữ tự nhiên sử dụng **Gemini 2.5 Flash** (ví dụ: *"Tôi mới mua 200 cổ phiếu FPT giá 135k"*) để trích xuất JSON cấu trúc đầy đủ và tự động điền thông tin vào biểu mẫu chỉ với 1 click.
+    *   **Smart Price Normalization (Tự động Chuẩn hóa Giá)**: Tự động điều chỉnh sai lệch đơn vị giá mua đầu vào (Vàng chỉ/lượng, Cổ phiếu hàng chục/hàng ngàn, Crypto USD/VND) dựa trên tỷ số so sánh với giá live thị trường, ngăn chặn lỗi hiện sai lệch lợi nhuận khổng lồ.
+    *   **Autocomplete & Auto-Prefill (Gợi ý & Điền sẵn)**: Dropdown gợi ý các mã tài sản phổ biến (FPT, GOLD, BTC, SAVING...) khi người dùng nhập thủ công, tự động điền Tên tài sản, phân loại, màu đồ thị và tự động gọi API lấy giá thị trường hiện thời để điền sẵn vào ô giá.
 *   **Giả Lập Stress-Test & Đề Xuất Phòng Vệ**:
     *   Chạy công cụ mô phỏng 4 biến cố vĩ mô: *Lạm phát phi mã, Suy thoái thị trường, Khủng hoảng công nghệ, Sụp đổ crypto*.
     *   Tính toán chỉ số đa dạng hóa danh mục (Simpson Diversity Index) và mức độ tổn hại rủi ro tối đa (Vulnerability Score).
     *   Gọi mô hình **Gemini 2.5 Flash** phân tích sâu cấu trúc danh mục và xuất ra các hành động phòng vệ (hedging/rebalance) chi tiết kèm số tiền khuyến nghị.
+
 
 ---
 

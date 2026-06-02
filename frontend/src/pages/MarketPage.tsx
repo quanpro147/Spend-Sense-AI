@@ -106,8 +106,6 @@ function MarketSnapshot({
   onRefresh: () => void;
 }>) {
   const context = data.market_context;
-  const breadth = context.vietnam_market.breadth;
-  const sourceIssues = context.source_quality.missing_or_partial;
 
   return (
     <div className="space-y-4">

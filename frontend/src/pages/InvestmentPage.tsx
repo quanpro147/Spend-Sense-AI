@@ -34,12 +34,27 @@ import {
   addAsset,
   deleteAsset,
   getStressTest,
+  parseAssetWithAI,
+  getMarketPrice,
 } from "@/lib/api";
 import type {
   InvestmentProfile,
   InvestmentAsset,
   StressTestResult,
 } from "@/lib/api";
+
+const POPULAR_SYMBOLS = [
+  { symbol: "FPT", name: "Cổ phiếu FPT", type: "stock", color: "#5BAAEC" },
+  { symbol: "VNM", name: "Cổ phiếu Vinamilk", type: "stock", color: "#22C55E" },
+  { symbol: "TCB", name: "Cổ phiếu Techcombank", type: "stock", color: "#A78BFA" },
+  { symbol: "HPG", name: "Cổ phiếu Hòa Phát", type: "stock", color: "#707881" },
+  { symbol: "MWG", name: "Cổ phiếu Thế Giới Di Động", type: "stock", color: "#F59E0B" },
+  { symbol: "SJC", name: "Vàng SJC", type: "gold", color: "#F59E0B" },
+  { symbol: "GOLD", name: "Vàng SJC", type: "gold", color: "#F59E0B" },
+  { symbol: "BTC", name: "Bitcoin", type: "crypto", color: "#FB923C" },
+  { symbol: "ETH", name: "Ethereum", type: "crypto", color: "#A78BFA" },
+  { symbol: "SAVING", name: "Gửi Tiết Kiệm", type: "saving", color: "#EC4899" },
+];
 
 const riskLabels = { conservative: "Thận trọng", moderate: "Trung bình", aggressive: "Tăng trưởng" };
 const riskClasses = {
@@ -62,12 +77,100 @@ export function InvestmentPage() {
   // Modal states
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showAssetModal, setShowAssetModal] = useState(false);
+  const [modalMode, setModalMode] = useState<"ai" | "manual">("ai");
   
   // Form states
   const [profileForm, setProfileForm] = useState({ risk_appetite: "moderate", capital: 0, goal: "" });
   const [assetForm, setAssetForm] = useState({ symbol: "", name: "", type: "stock", quantity: 1, purchase_price: 0, color: "#5BAAEC" });
+  const [aiText, setAiText] = useState("");
+  const [aiParsing, setAiParsing] = useState(false);
+  const [suggestions, setSuggestions] = useState<typeof POPULAR_SYMBOLS>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  // Handlers for AI parsing and suggestions
+  const handleAIParse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!aiText.trim()) return;
+    try {
+      setAiParsing(true);
+      setErrorMsg("");
+      const parsed = await parseAssetWithAI(aiText);
+      if (parsed.symbol) {
+        setAssetForm({
+          symbol: parsed.symbol,
+          name: parsed.name,
+          type: parsed.type,
+          quantity: parsed.quantity,
+          purchase_price: parsed.purchase_price,
+          color: parsed.color,
+        });
+        setModalMode("manual"); // Switch to manual to review and edit
+      } else {
+        setErrorMsg("AI không nhận diện được tài sản này. Hãy nhập thủ công hoặc mô tả rõ hơn.");
+      }
+    } catch (err: any) {
+      console.error("AI parsing failed:", err);
+      setErrorMsg(err.message || "Lỗi AI phân tích tài sản.");
+    } finally {
+      setAiParsing(false);
+    }
+  };
+
+  const handleSymbolChange = async (val: string) => {
+    const symbol = val.toUpperCase();
+    setAssetForm(prev => ({ ...prev, symbol }));
+    
+    if (symbol.trim()) {
+      const filtered = POPULAR_SYMBOLS.filter(item => 
+        item.symbol.includes(symbol) || item.name.toLowerCase().includes(symbol.toLowerCase())
+      );
+      setSuggestions(filtered);
+      setShowSuggestions(true);
+      
+      // Auto-prefill if matches exactly
+      const exactMatch = POPULAR_SYMBOLS.find(item => item.symbol === symbol);
+      if (exactMatch) {
+        setAssetForm(prev => ({
+          ...prev,
+          name: exactMatch.name,
+          type: exactMatch.type,
+          color: exactMatch.color
+        }));
+        try {
+          const res = await getMarketPrice(symbol);
+          if (res && res.price > 0) {
+            setAssetForm(prev => ({ ...prev, purchase_price: res.price }));
+          }
+        } catch (e) {
+          console.error("Prefill price failed:", e);
+        }
+      }
+    } else {
+      setSuggestions([]);
+      setShowSuggestions(false);
+    }
+  };
+
+  const handleSelectSuggestion = async (item: typeof POPULAR_SYMBOLS[0]) => {
+    setAssetForm(prev => ({
+      ...prev,
+      symbol: item.symbol,
+      name: item.name,
+      type: item.type,
+      color: item.color
+    }));
+    setShowSuggestions(false);
+    try {
+      const res = await getMarketPrice(item.symbol);
+      if (res && res.price > 0) {
+        setAssetForm(prev => ({ ...prev, purchase_price: res.price }));
+      }
+    } catch (e) {
+      console.error("Prefill price failed:", e);
+    }
+  };
 
   // Fetch functions
   const fetchProfile = async () => {
@@ -371,7 +474,7 @@ export function InvestmentPage() {
           <div className="stitch-card p-lg">
             <div className="flex justify-between items-center mb-lg">
               <h3 className="section-title">Danh Sách Tài Sản</h3>
-              <button onClick={() => setShowAssetModal(true)} className="btn-primary flex items-center gap-1 text-sm py-2">
+              <button onClick={() => { setShowAssetModal(true); setModalMode("ai"); setAiText(""); setErrorMsg(""); }} className="btn-primary flex items-center gap-1 text-sm py-2">
                 <Plus className="w-4 h-4" />
                 Thêm tài sản
               </button>
@@ -738,101 +841,237 @@ export function InvestmentPage() {
               <button onClick={() => setShowAssetModal(false)} className="text-stitch-on-surface-variant hover:text-stitch-on-surface font-semibold text-sm">Đóng</button>
             </div>
             
-            <form onSubmit={handleAddAsset} className="space-y-4">
-              {errorMsg && <p className="text-danger text-sm bg-red-50 p-2 rounded border border-red-200">{errorMsg}</p>}
-              
-              <div className="grid grid-cols-2 gap-md">
+            {/* Modal Mode Selector */}
+            <div className="flex border-b border-stitch-outline-variant/60 pb-2 gap-4">
+              <button
+                type="button"
+                onClick={() => { setModalMode("ai"); setErrorMsg(""); }}
+                className={`flex-1 pb-1.5 text-sm font-semibold text-center transition-all ${
+                  modalMode === "ai"
+                    ? "border-b-2 border-stitch-primary-container text-stitch-primary-container font-bold"
+                    : "text-stitch-on-surface-variant hover:text-stitch-on-surface"
+                }`}
+              >
+                🤖 Trợ lý AI (Quick-Add)
+              </button>
+              <button
+                type="button"
+                onClick={() => { setModalMode("manual"); setErrorMsg(""); }}
+                className={`flex-1 pb-1.5 text-sm font-semibold text-center transition-all ${
+                  modalMode === "manual"
+                    ? "border-b-2 border-stitch-primary-container text-stitch-primary-container font-bold"
+                    : "text-stitch-on-surface-variant hover:text-stitch-on-surface"
+                }`}
+              >
+                ✏️ Nhập thủ công
+              </button>
+            </div>
+
+            {modalMode === "ai" ? (
+              <form onSubmit={handleAIParse} className="space-y-4">
+                {errorMsg && <p className="text-danger text-sm bg-red-50 p-2 rounded border border-red-200">{errorMsg}</p>}
+                
                 <div className="space-y-2">
-                  <label className="text-sm font-semibold text-stitch-on-surface">Mã tài sản (Symbol)</label>
+                  <label className="text-sm font-semibold text-stitch-on-surface block">Mô tả giao dịch bằng ngôn ngữ tự nhiên</label>
+                  <textarea
+                    rows={4}
+                    required
+                    value={aiText}
+                    onChange={(e) => setAiText(e.target.value)}
+                    placeholder="Ví dụ:
+- Tôi mới mua 200 cổ phiếu FPT giá 135k
+- Vừa mua thêm 2 lượng vàng SJC giá 82 triệu
+- Gửi tiết kiệm 50 triệu ngân hàng Vietcombank
+- Đang nắm giữ 0.05 BTC mua giá 67000 USD"
+                    className="w-full bg-stitch-surface-container rounded-lg p-2.5 border border-stitch-outline-variant/60 text-sm focus:outline-none focus:ring-2 focus:ring-stitch-primary-container"
+                  />
+                  <p className="text-xs text-stitch-on-surface-variant leading-relaxed">
+                    AI sẽ tự động phân tích: Mã tài sản, Số lượng, Loại tài sản, Giá mua quy đổi sang VND và chọn màu sắc phù hợp.
+                  </p>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={aiParsing || !aiText.trim()}
+                  className="btn-primary w-full py-2.5 flex items-center justify-center gap-2 mt-4"
+                >
+                  {aiParsing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Đang phân tích bằng Gemini...
+                    </>
+                  ) : (
+                    "Phân tích bằng AI"
+                  )}
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleAddAsset} className="space-y-4">
+                {errorMsg && <p className="text-danger text-sm bg-red-50 p-2 rounded border border-red-200">{errorMsg}</p>}
+                
+                <div className="grid grid-cols-2 gap-md">
+                  {/* Symbol with Autocomplete */}
+                  <div className="space-y-2 relative">
+                    <label className="text-sm font-semibold text-stitch-on-surface block">Mã tài sản (Symbol)</label>
+                    <input
+                      type="text"
+                      required
+                      value={assetForm.symbol}
+                      onChange={(e) => handleSymbolChange(e.target.value)}
+                      onFocus={() => {
+                        if (assetForm.symbol.trim()) setShowSuggestions(true);
+                      }}
+                      onBlur={() => {
+                        // Allow click to register
+                        setTimeout(() => setShowSuggestions(false), 200);
+                      }}
+                      className="w-full bg-stitch-surface-container rounded-lg p-2.5 border border-stitch-outline-variant/60 text-sm focus:outline-none focus:ring-2 focus:ring-stitch-primary-container"
+                      placeholder="Ví dụ: FPT, GOLD, BTC"
+                      autoComplete="off"
+                    />
+                    {showSuggestions && suggestions.length > 0 && (
+                      <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-stitch-outline-variant/60 rounded-lg shadow-lg z-50 max-h-[160px] overflow-y-auto">
+                        {suggestions.map((item) => (
+                          <button
+                            key={item.symbol}
+                            type="button"
+                            onMouseDown={() => handleSelectSuggestion(item)}
+                            className="w-full text-left px-3 py-2 hover:bg-stitch-surface-container flex items-center justify-between text-sm transition-colors"
+                          >
+                            <div>
+                              <span className="font-bold text-stitch-on-surface">{item.symbol}</span>
+                              <span className="text-xs text-stitch-on-surface-variant ml-2">({item.name})</span>
+                            </div>
+                            <span className="text-xs px-2 py-0.5 rounded bg-stitch-primary-container/10 text-brand-blue-dark uppercase">
+                              {item.type}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-stitch-on-surface block">Phân loại</label>
+                    <select
+                      value={assetForm.type}
+                      onChange={(e) => setAssetForm({ ...assetForm, type: e.target.value })}
+                      className="w-full bg-stitch-surface-container rounded-lg p-2.5 border border-stitch-outline-variant/60 text-sm focus:outline-none focus:ring-2 focus:ring-stitch-primary-container"
+                    >
+                      <option value="stock">Cổ phiếu (Vietnam)</option>
+                      <option value="gold">Vàng (SJC)</option>
+                      <option value="saving">Gửi tiết kiệm</option>
+                      <option value="crypto">Tiền mã hóa (Binance)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-stitch-on-surface block">Tên hiển thị</label>
                   <input
                     type="text"
                     required
-                    value={assetForm.symbol}
-                    onChange={(e) => setAssetForm({ ...assetForm, symbol: e.target.value.toUpperCase() })}
+                    value={assetForm.name}
+                    onChange={(e) => setAssetForm({ ...assetForm, name: e.target.value })}
                     className="w-full bg-stitch-surface-container rounded-lg p-2.5 border border-stitch-outline-variant/60 text-sm focus:outline-none focus:ring-2 focus:ring-stitch-primary-container"
-                    placeholder="Ví dụ: FPT, GOLD, BTC"
+                    placeholder="Ví dụ: Cổ phiếu FPT, Vàng SJC Bảo Tín"
                   />
                 </div>
+
+                <div className="grid grid-cols-2 gap-md">
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-stitch-on-surface block">Số lượng sở hữu</label>
+                    <input
+                      type="number"
+                      required
+                      step="any"
+                      min="0"
+                      value={assetForm.quantity || ""}
+                      onChange={(e) => setAssetForm({ ...assetForm, quantity: parseFloat(e.target.value) || 0 })}
+                      className="w-full bg-stitch-surface-container rounded-lg p-2.5 border border-stitch-outline-variant/60 text-sm focus:outline-none focus:ring-2 focus:ring-stitch-primary-container"
+                      placeholder="Ví dụ: 1000"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-stitch-on-surface block">Giá mua trung bình (VND)</label>
+                    <input
+                      type="number"
+                      required
+                      min="0"
+                      value={assetForm.purchase_price || ""}
+                      onChange={(e) => setAssetForm({ ...assetForm, purchase_price: parseFloat(e.target.value) || 0 })}
+                      className="w-full bg-stitch-surface-container rounded-lg p-2.5 border border-stitch-outline-variant/60 text-sm focus:outline-none focus:ring-2 focus:ring-stitch-primary-container"
+                      placeholder="Ví dụ: 72000"
+                    />
+                    {assetForm.purchase_price > 0 && (
+                      <div className="mt-1.5 text-xs text-stitch-on-surface-variant flex flex-col gap-1 border-t border-stitch-outline-variant/30 pt-1">
+                        <span>Định dạng hiển thị: <strong className="text-stitch-primary-container">{formatCurrency(assetForm.purchase_price)}</strong></span>
+                        {(() => {
+                          if (assetForm.type === "gold") {
+                            const p = assetForm.purchase_price;
+                            let suggested = p;
+                            if (p < 10) suggested = p * 10000000;
+                            else if (p < 100) suggested = p * 1000000;
+                            else if (p < 1000) suggested = p * 100000;
+                            else if (p < 100000) suggested = p * 1000;
+                            else if (p < 15000000) suggested = p * 10;
+                            
+                            if (suggested !== p) {
+                              return (
+                                <span className="text-amber-600 font-semibold bg-amber-50 p-1 rounded border border-amber-200 mt-0.5">
+                                  ⚠️ Hệ thống sẽ tự động sửa thành {formatCurrency(suggested)}/lượng.
+                                </span>
+                              );
+                            }
+                          }
+                          if (assetForm.type === "stock" && assetForm.purchase_price < 1000) {
+                            return (
+                              <span className="text-amber-600 font-semibold bg-amber-50 p-1 rounded border border-amber-200 mt-0.5">
+                                ⚠️ Hệ thống sẽ tự động nhân 1.000 thành {formatCurrency(assetForm.purchase_price * 1000)}.
+                              </span>
+                            );
+                          }
+                          if (assetForm.type === "crypto" && assetForm.symbol === "BTC" && assetForm.purchase_price < 150000) {
+                            return (
+                              <span className="text-amber-600 font-semibold bg-amber-50 p-1 rounded border border-amber-200 mt-0.5">
+                                ⚠️ Giá BTC dạng USD, hệ thống tự động đổi sang VND (~{formatCurrency(assetForm.purchase_price * 25400)}).
+                              </span>
+                            );
+                          }
+                          return null;
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div className="space-y-2">
-                  <label className="text-sm font-semibold text-stitch-on-surface">Phân loại</label>
+                  <label className="text-sm font-semibold text-stitch-on-surface block">Màu sắc biểu đồ</label>
                   <select
-                    value={assetForm.type}
-                    onChange={(e) => setAssetForm({ ...assetForm, type: e.target.value })}
+                    value={assetForm.color}
+                    onChange={(e) => setAssetForm({ ...assetForm, color: e.target.value })}
                     className="w-full bg-stitch-surface-container rounded-lg p-2.5 border border-stitch-outline-variant/60 text-sm focus:outline-none focus:ring-2 focus:ring-stitch-primary-container"
                   >
-                    <option value="stock">Cổ phiếu (Vietnam)</option>
-                    <option value="gold">Vàng (SJC)</option>
-                    <option value="saving">Gửi tiết kiệm</option>
-                    <option value="crypto">Tiền mã hóa (Binance)</option>
+                    <option value="#5BAAEC">Xanh lam</option>
+                    <option value="#22C55E">Xanh lục</option>
+                    <option value="#F59E0B">Vàng hổ phách</option>
+                    <option value="#FB923C">Cam</option>
+                    <option value="#A78BFA">Tím</option>
+                    <option value="#EC4899">Hồng</option>
                   </select>
                 </div>
-              </div>
 
-              <div className="space-y-2">
-                <label className="text-sm font-semibold text-stitch-on-surface">Tên hiển thị</label>
-                <input
-                  type="text"
-                  required
-                  value={assetForm.name}
-                  onChange={(e) => setAssetForm({ ...assetForm, name: e.target.value })}
-                  className="w-full bg-stitch-surface-container rounded-lg p-2.5 border border-stitch-outline-variant/60 text-sm focus:outline-none focus:ring-2 focus:ring-stitch-primary-container"
-                  placeholder="Ví dụ: Cổ phiếu FPT, Vàng SJC Bảo Tín"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-md">
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold text-stitch-on-surface">Số lượng sở hữu</label>
-                  <input
-                    type="number"
-                    required
-                    step="any"
-                    min="0"
-                    value={assetForm.quantity || ""}
-                    onChange={(e) => setAssetForm({ ...assetForm, quantity: parseFloat(e.target.value) || 0 })}
-                    className="w-full bg-stitch-surface-container rounded-lg p-2.5 border border-stitch-outline-variant/60 text-sm focus:outline-none focus:ring-2 focus:ring-stitch-primary-container"
-                    placeholder="Ví dụ: 1000"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold text-stitch-on-surface">Giá mua trung bình (VND)</label>
-                  <input
-                    type="number"
-                    required
-                    min="0"
-                    value={assetForm.purchase_price || ""}
-                    onChange={(e) => setAssetForm({ ...assetForm, purchase_price: parseFloat(e.target.value) || 0 })}
-                    className="w-full bg-stitch-surface-container rounded-lg p-2.5 border border-stitch-outline-variant/60 text-sm focus:outline-none focus:ring-2 focus:ring-stitch-primary-container"
-                    placeholder="Ví dụ: 72000"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-semibold text-stitch-on-surface">Màu sắc biểu đồ</label>
-                <select
-                  value={assetForm.color}
-                  onChange={(e) => setAssetForm({ ...assetForm, color: e.target.value })}
-                  className="w-full bg-stitch-surface-container rounded-lg p-2.5 border border-stitch-outline-variant/60 text-sm focus:outline-none focus:ring-2 focus:ring-stitch-primary-container"
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="btn-primary w-full py-2.5 flex items-center justify-center gap-2 mt-4"
                 >
-                  <option value="#5BAAEC">Xanh lam</option>
-                  <option value="#22C55E">Xanh lục</option>
-                  <option value="#F59E0B">Vàng hổ phách</option>
-                  <option value="#FB923C">Cam</option>
-                  <option value="#A78BFA">Tím</option>
-                  <option value="#EC4899">Hồng</option>
-                </select>
-              </div>
-
-              <button
-                type="submit"
-                disabled={submitting}
-                className="btn-primary w-full py-2.5 flex items-center justify-center gap-2 mt-4"
-              >
-                {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
-                Thêm tài sản
-              </button>
-            </form>
+                  {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Thêm tài sản
+                </button>
+              </form>
+            )}
           </div>
         </div>
       )}

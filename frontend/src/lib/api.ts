@@ -344,6 +344,32 @@ export async function getStressTest(): Promise<StressTestResult> {
   });
 }
 
+export interface ParsedAsset {
+  symbol: string;
+  name: string;
+  type: 'stock' | 'gold' | 'saving' | 'crypto';
+  quantity: number;
+  purchase_price: number;
+  color: string;
+}
+
+export async function parseAssetWithAI(text: string): Promise<ParsedAsset> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  return request<ParsedAsset>("/investment/parse-asset", {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: JSON.stringify({ text }),
+  });
+}
+
+export async function getMarketPrice(symbol: string): Promise<{ symbol: string; price: number }> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const params = new URLSearchParams({ symbol });
+  return request<{ symbol: string; price: number }>(`/investment/market-price?${params.toString()}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+}
+
 
 // ---------------------------------------------------------------------------
 // Transactions, insights, goals, preferences APIs
