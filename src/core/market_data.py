@@ -36,6 +36,12 @@ DEFAULT_STOCK_PRICES = {
     "VND": 20000.0,
     "MWG": 60000.0,
     "VIC": 45000.0,
+    "VHM": 40000.0,
+    "CTG": 34000.0,
+    "BID": 48000.0,
+    "MBB": 23000.0,
+    "VPB": 19000.0,
+    "STB": 28000.0,
 }
 
 # Standard fallbacks for crypto prices (USD)
