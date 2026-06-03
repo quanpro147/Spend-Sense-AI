@@ -12,7 +12,7 @@ Là ứng dụng Web (React) mà người dùng trực tiếp tương tác. Tầ
 - Hiển thị danh sách insight, biểu đồ thống kê và báo cáo chi tiêu.
 - Nhận ảnh hóa đơn từ camera hoặc thư viện ảnh.
 - Gửi feedback (xác nhận / từ chối) cho từng insight.
-- Hiển thị số dư ví, lịch sử giao dịch, mục tiêu tài chính.
+- Hiển thị lịch sử giao dịch, mục tiêu tài chính, danh mục đầu tư và báo cáo.
 - Tầng này **không chứa logic nghiệp vụ**.
 
 ### Tầng 2 — Application (Xử lý nghiệp vụ)
@@ -21,16 +21,16 @@ Là ứng dụng Web (React) mà người dùng trực tiếp tương tác. Tầ
 
 | Luồng | Tên | Mô tả tóm tắt |
 |-------|-----|----------------|
-| **Luồng 1** | Data Ingestion | Chụp hóa đơn → OCR → Embedding → Semantic Cache → LLM Insight |
-| **Luồng 2** | Cash Flow | Quản lý ví, giao dịch, số dư, mục tiêu tài chính |
-| **Luồng 3** | Investment Advisor | Phân tích danh mục đầu tư, đề xuất chiến lược theo hồ sơ rủi ro |
-| **Luồng 4** | Resource Optimization | Phân tích chi tiêu bất thường, tối ưu ngân sách, gửi cảnh báo |
-| **Luồng 5** | Reporting | Tổng hợp báo cáo, biểu đồ, thông báo định kỳ |
+| **Luồng 1** | Data Ingestion | Chụp hóa đơn → OCR → Embedding → Semantic Cache → LLM Insight ✅ |
+| **Luồng 2** | Cash Flow | Quản lý giao dịch, mục tiêu tài chính, tùy chọn người dùng ✅ |
+| **Luồng 3** | Investment & Stress Test | Theo dõi danh mục đầu tư + stress-test vĩ mô + đề xuất hedging (PA3) ✅ |
+| **Luồng 4** | Resource Optimization | Phát hiện chi tiêu bất thường, cảnh báo 🔧 (mới có cờ bật/tắt, chưa có logic) |
+| **Luồng 5** | Reporting | Tổng hợp báo cáo tài chính + nhận xét AI (on-demand) ✅ |
 
 ### Tầng 3 — Data (Lưu trữ dữ liệu)
 
 Gồm hai kho lưu trữ chính:
-- **PostgreSQL** (Relational Store): lưu người dùng, giao dịch, ví, mục tiêu, danh mục đầu tư, báo cáo.
+- **PostgreSQL** (Relational Store): lưu người dùng, hóa đơn, giao dịch, mục tiêu, danh mục đầu tư, tùy chọn người dùng (8 bảng — §5).
 - **ChromaDB** (Vector DB): lưu embedding hóa đơn và insight đã sinh, phục vụ Semantic Cache cho Luồng 1.
 
 Tầng này **chỉ được truy cập bởi Tầng 2**, không bao giờ trực tiếp từ Tầng 1.
@@ -74,90 +74,89 @@ Feedback:
   REJECT  → cache_delete(vector_id) → xóa khỏi ChromaDB (unlearning)
 ```
 
-### Luồng 2 — Cash Flow (Quản lý Dòng tiền)
+### Luồng 2 — Cash Flow (Quản lý Dòng tiền) ✅
 
 ```
-User Input (giao dịch / số dư ví)
+User Input (giao dịch / mục tiêu / tùy chọn)
        │
        ▼
-[CashFlowService]
+[transactions / goals / preferences routes]
        │
-       ├── Tạo / cập nhật Transaction
-       ├── Cập nhật số dư Wallet
-       ├── Kiểm tra Goal progress
+       ├── Tạo / cập nhật Transaction (expense | income)
+       ├── (tùy chọn) gắn receipt_id + receipt_items
+       ├── CRUD FinancialGoal  (progress tính khi đọc)
+       └── Đọc / ghi UserPreferences
        │
        ▼
 [PostgreSQL]
-  ├── bảng wallets   (số dư hiện tại)
-  ├── bảng transactions (lịch sử giao dịch)
-  └── bảng goals    (mục tiêu tiết kiệm)
+  ├── transactions     (lịch sử giao dịch)
+  ├── receipts / receipt_items
+  ├── financial_goals  (mục tiêu tiết kiệm)
+  └── user_preferences (cờ thông báo)
        │
        ▼
-Dashboard / Notification
+Dashboard
 ```
 
-### Luồng 3 — Investment Advisor (Tư vấn Đầu tư)
+> Không có bảng/khái niệm `wallets` hay số dư ví trong code hiện tại.
+
+### Luồng 3 — Investment & Stress Test (PA3) ✅
 
 ```
-User Risk Profile Input
+User Portfolio Input (profile + assets)
        │
        ▼
-[InvestmentAdvisorService]
+[investment route]
        │
-       ├── Đọc risk_profiles (tolerance, horizon, liquidity_need)
-       ├── Query historical transactions → tính disposable income
-       │
-       ▼
-[Gemini 2.5 Flash — portfolio_recommendation(profile, spending)]
+       ├── CRUD investment_profiles (risk_appetite, capital, goal)
+       ├── CRUD investment_assets   (stock | gold | saving | crypto)
        │
        ▼
-[PostgreSQL — investment_recommendations]
+[core.market_data.get_market_prices()] ── giá real-time (vnstock / Binance / SJC)
        │
        ▼
-Recommendation Response (asset allocation, fund suggestions)
+[core.stress_tester.run_portfolio_stress_test()]
+       ├── 4 kịch bản shock + vulnerability / diversification score
+       └── Gemini (_call_gemini) → overall_analysis + hedging_strategies
+       │
+       ▼
+StressTestResponse (scenarios, assets, hedging)
 ```
 
-### Luồng 4 — Resource Optimization (Tối ưu Nguồn lực)
+### Luồng 4 — Resource Optimization (Tối ưu Nguồn lực) 🔧 Planned
 
 ```
+(Chưa triển khai — dự kiến)
 Scheduled Job / Trigger
        │
        ▼
-[OptimizationService]
-       │
+[OptimizationService — planned]
        ├── Phân tích patterns từ transactions (N ngày gần nhất)
        ├── Phát hiện chi tiêu bất thường (anomaly detection)
-       ├── So sánh với goals → tính budget gap
+       ├── So sánh với financial_goals → budget gap
+       └── LLM → gợi ý + tạo Alert (cần thêm bảng alerts)
        │
        ▼
-[Gemini 2.5 Flash — optimize_spending(patterns)]
-       │
-       ├── Tạo Alert nếu vượt ngưỡng
-       └── Lưu vào PostgreSQL — alerts
-              │
-              ▼
-       Push Notification / Email Alert → User
+Push Notification / Email Alert → User
+
+Hiện tại: chỉ có cờ anomaly_alerts / goal_reminders trong user_preferences.
 ```
 
-### Luồng 5 — Reporting (Báo cáo & Thông báo)
+### Luồng 5 — Reporting (Báo cáo) ✅ on-demand
 
 ```
-Scheduled / On-demand Request
+GET /reports/summary?range=...
        │
        ▼
-[ReportingService]
+[reports.get_financial_report()]
        │
-       ├── Tổng hợp dữ liệu từ transactions, wallets, goals
-       ├── Gọi [Gemini 2.5 Flash — summarize_report(data)]
-       ├── Tạo bảng biểu đồ (chart metadata)
-       │
-       ▼
-[PostgreSQL]
-  ├── bảng reports (báo cáo tổng hợp)
-  └── bảng charts  (metadata biểu đồ)
+       ├── SELECT transactions / financial_goals / investment_assets (theo range)
+       ├── Aggregate in-memory (income/expense/net, category breakdown...)
+       ├── gemini_client.generate_financial_report_review() → ai_review (+ fallback)
        │
        ▼
-Report Response (PDF / JSON) → Presentation Layer
+FinancialReportResponse → Presentation Layer (tự render biểu đồ)
+       (KHÔNG ghi bảng reports/charts)
 ```
 
 ---
@@ -166,21 +165,27 @@ Report Response (PDF / JSON) → Presentation Layer
 
 | Component | Lớp triển khai | Luồng | Trạng thái | Vai trò |
 |---|---|---|---|---|
-| **Backend API** | `main.py`, `src/api/routes/` | Tất cả | ✅ Implemented | FastAPI entrypoint, định tuyến request |
-| **Auth Module** | `src/auth/` | Tất cả | ✅ Implemented | JWT, bcrypt, dependency injection |
-| **CV & OCR Module** | `src/vision/` | Luồng 1 | ✅ Stub | YOLOv11 detect, VietOCR extract |
-| **Embedding Module** | `src/embedding/` | Luồng 1 | ✅ Stub | sentence-transformers → vector 384 chiều |
-| **Semantic Cache** | `src/cache/` | Luồng 1 | ✅ Implemented | ChromaDB lookup/store/delete |
-| **LLM Module** | `src/llm/` | Luồng 1, 3, 4, 5 | ✅ Implemented | Gemini 2.5 Flash — insight, portfolio, report |
-| **Pipeline Orchestrator** | `src/pipeline.py` | Luồng 1 | ✅ Implemented | Điều phối 5 bước xử lý hóa đơn |
-| **Domain Models** | `src/models/` | Tất cả | ✅ Implemented | Pydantic models: Receipt, Insight, Transaction |
-| **Database Layer** | `src/db/` | Tất cả | ✅ Implemented | SQLAlchemy async, PostgreSQL |
-| **Cash Flow Service** | `src/services/cashflow.py` | Luồng 2 | 🔧 Planned | Quản lý ví, giao dịch, mục tiêu |
-| **Investment Advisor** | `src/services/investment.py` | Luồng 3 | 🔧 Planned | Đề xuất danh mục theo hồ sơ rủi ro |
-| **Optimization Service** | `src/services/optimization.py` | Luồng 4 | 🔧 Planned | Phân tích anomaly, tạo cảnh báo |
-| **Reporting Service** | `src/services/reporting.py` | Luồng 5 | 🔧 Planned | Tổng hợp báo cáo, biểu đồ |
+| **Backend API & Routing** | `main.py`, `src/api/routes/` (10 router), `src/api/schemas.py` | Tất cả | ✅ Implemented | FastAPI entrypoint, định tuyến request, DTO validation |
+| **Auth Module** | `src/auth/service.py`, `src/auth/dependencies.py` | Tất cả | ✅ Implemented | JWT (PyJWT), bcrypt, dependency injection |
+| **CV & OCR Module** | `src/vision/detector.py`, `ocr.py`, `reconstructor.py` | Luồng 1 | ✅ Implemented¹ | YOLOv11 detect, VietOCR extract, ghép field → Receipt |
+| **Embedding Module** | `src/embedding/embedder.py` | Luồng 1 | ✅ Implemented¹ | sentence-transformers → vector 384 chiều |
+| **Semantic Cache** | `src/cache/vector_store.py` | Luồng 1 | ✅ Implemented | ChromaDB lookup/store/delete |
+| **LLM Module** | `src/llm/gemini_client.py` | Luồng 1, 5 | ✅ Implemented | Gemini/Gemma — insight, phân loại item, report review |
+| **Pipeline Orchestrator** | `src/pipeline.py`, `src/core/tool_result.py` | Luồng 1 | ✅ Implemented | Điều phối các bước xử lý hóa đơn |
+| **Domain Models** | `src/models/expense.py` | Luồng 1 | ✅ Implemented | Pydantic: Receipt, ReceiptItem, Insight |
+| **Database Layer** | `src/db/models.py`, `src/db/base.py` | Tất cả | ✅ Implemented | SQLAlchemy async (8 bảng), PostgreSQL |
+| **Cash Flow (Transactions/Goals/Preferences)** | `src/api/routes/transactions.py`, `goals.py`, `preferences.py` | Luồng 2 | ✅ Implemented | CRUD giao dịch, mục tiêu, cấu hình người dùng |
+| **Investment & Stress Test (PA3)** | `src/api/routes/investment.py`, `src/core/stress_tester.py`, `src/core/market_data.py` | Luồng 3 | ✅ Implemented | Theo dõi danh mục + stress-test vĩ mô + hedging |
+| **Market Intelligence** | `src/services/market_data_service.py`, `market_context_service.py`, `src/api/routes/market.py` | Luồng 3 | ✅ Implemented | Giá thị trường real-time (vnstock/Binance/SJC), tin tức |
+| **Reporting** | `src/api/routes/reports.py` | Luồng 5 | ✅ Implemented² | Tổng hợp báo cáo tài chính + nhận xét AI |
+| **Resource Optimization** | — | Luồng 4 | 🔧 Planned | Anomaly detection + alert service (chưa triển khai) |
 
-> **Ghi chú:** ✅ Implemented = đã triển khai trong codebase hiện tại. ✅ Stub = khung code đầy đủ nhưng AI model chưa thực. 🔧 Planned = chưa triển khai, dự kiến cho các sprint tiếp theo.
+> **Ghi chú:**
+> - ✅ Implemented = đã có trong codebase hiện tại. 🔧 Planned = chưa triển khai.
+> - ¹ CV/OCR và Embedding dùng **model thật**, tự suy giảm về fallback xác định (stub) khi weights/thiết bị không sẵn sàng — không còn là stub thuần.
+> - ² Báo cáo được **tính on-demand** ở route (không lưu bảng `reports`/`charts`).
+> - Luồng 4 (Resource Optimization) hiện chỉ có *cờ bật/tắt* trong `user_preferences` (`anomaly_alerts`); chưa có service phân tích/alert.
+> - Tầng xử lý (vision/ocr/embedding/cache/llm/pipeline/stress-test/market/auth) hiện thực bằng **module hàm** trả `ToolResult` — không phải class (xem quy ước §4).
 
 ---
 
@@ -188,9 +193,9 @@ Report Response (PDF / JSON) → Presentation Layer
 
 | Mục | Nội dung |
 |-----|----------|
-| **Lớp triển khai** | `main.py`, `src/api/routes/auth.py`, `src/api/routes/receipts.py`, `src/api/routes/feedback.py`, `src/api/routes/insights.py`, `src/api/schemas.py` |
-| **Trách nhiệm** | Là điểm vào duy nhất của hệ thống. Tiếp nhận HTTP request, validate input qua Pydantic schema, điều hướng đến handler phù hợp, serialize kết quả thành JSON response. Quản lý lifespan (khởi tạo DB pool, ChromaDB client khi startup, giải phóng khi shutdown). |
-| **Kết nối đến component khác** | → **Auth Module**: inject `get_current_user` dependency vào mọi route cần xác thực. → **Pipeline Orchestrator**: `ReceiptsRouter` gọi `Pipeline.analyze_receipt()` để xử lý hóa đơn. → **Semantic Cache**: `FeedbackRouter` gọi `VectorStore.cache_delete()` khi REJECT; `InsightsRouter` gọi `VectorStore.list_insights()` / `get_insight()`. → **Domain Models**: dùng Pydantic schema `*Request` / `*Response` để validate và serialize. |
+| **Lớp triển khai** | `main.py` + 10 router trong `src/api/routes/`: `auth.py`, `receipts.py`, `transactions.py`, `feedback.py`, `insights.py`, `investment.py`, `goals.py`, `preferences.py`, `reports.py`, `market.py`; DTO trong `src/api/schemas.py` |
+| **Trách nhiệm** | Là điểm vào duy nhất của hệ thống. Tiếp nhận HTTP request, validate input qua Pydantic schema, điều hướng đến handler phù hợp, serialize kết quả thành JSON response. Cấu hình CORS và quản lý lifespan (`_warm_up_models()` nạp sẵn YOLO/VietOCR/Embedding khi startup). Mỗi router là instance `APIRouter`, handler là `async def`. |
+| **Kết nối đến component khác** | → **Auth Module**: inject `get_current_user` qua `Depends()` vào mọi route cần xác thực. → **Pipeline Orchestrator**: `receipts` router gọi `pipeline.analyze_receipt_details()` để xử lý hóa đơn. → **Semantic Cache**: `feedback` router gọi `cache_delete()` khi REJECT; `insights` router gọi `list_insights()` / `get_insight()`. → **Cash Flow / Investment / Reporting / Market**: các router tương ứng gọi service/module nghiệp vụ. → **Domain Models / Schemas**: dùng Pydantic `*Request` / `*Response` để validate và serialize. |
 
 ---
 
@@ -199,8 +204,8 @@ Report Response (PDF / JSON) → Presentation Layer
 | Mục | Nội dung |
 |-----|----------|
 | **Lớp triển khai** | `src/auth/service.py`, `src/auth/dependencies.py` |
-| **Trách nhiệm** | Hash và verify mật khẩu bằng bcrypt. Tạo và decode JWT access token (PyJWT). Cung cấp FastAPI dependency `get_current_user` — decode token, query DB lấy `User`, trả về cho handler. Là cổng kiểm soát quyền truy cập của toàn hệ thống. |
-| **Kết nối đến component khác** | → **Database Layer**: query bảng `users` để xác minh email tồn tại khi đăng ký / lấy `User` object khi decode token. ← **Backend API**: được inject vào tất cả route có bảo vệ thông qua FastAPI `Depends()`. |
+| **Trách nhiệm** | Hai module hàm: `service` (hash/verify bcrypt, tạo & decode JWT bằng PyJWT, `user_id_from_email` cho Google login) và `dependencies` (`get_current_user`). Cung cấp FastAPI dependency `get_current_user` — decode token, query DB lấy `User`; nếu DB offline trả `AuthenticatedUser` (dataclass) dựng từ claim để degrade graceful. Là cổng kiểm soát quyền truy cập của toàn hệ thống. |
+| **Kết nối đến component khác** | → **Database Layer**: `db.get(User, id)` khi decode token; route `auth` xác minh email khi đăng ký. ← **Backend API**: inject vào mọi route có bảo vệ qua `Depends()`. |
 
 ---
 
@@ -208,9 +213,9 @@ Report Response (PDF / JSON) → Presentation Layer
 
 | Mục | Nội dung |
 |-----|----------|
-| **Lớp triển khai** | `src/vision/detector.py` (YOLOv11), `src/vision/ocr.py` (VietOCR) |
-| **Trách nhiệm** | `VisionDetector`: nhận ảnh gốc, dùng YOLOv11 phát hiện bounding box của hóa đơn, cắt (crop) vùng đó ra. `OCRExtractor`: nhận ảnh đã crop, dùng VietOCR trích xuất text thô, parse các dòng để xác định merchant, ngày mua, danh sách mặt hàng, tổng tiền — trả về `Receipt` có cấu trúc. Cả hai hiện là stub (deterministic mock). |
-| **Kết nối đến component khác** | ← **Pipeline Orchestrator**: bước 1 (`detect_receipt`) và bước 2 (`extract_receipt`) trong chuỗi Luồng 1. → **Domain Models**: `OCRExtractor` tạo ra `Receipt` và danh sách `ReceiptItem`. Đầu ra (`ToolResult.data["receipt"]`) được chuyển tiếp sang `Embedder`. |
+| **Lớp triển khai** | `src/vision/detector.py` (YOLOv11), `src/vision/ocr.py` (VietOCR), `src/vision/reconstructor.py` |
+| **Trách nhiệm** | Ba module hàm. `detector.detect_receipt()`: dùng YOLOv11 phát hiện vùng/field hóa đơn và crop. `ocr.extract_receipt()`: dùng VietOCR đọc text từng box/line. `reconstructor.reconstruct_receipt()`: ghép các field đã OCR (merchant, item, price, discount) thành `Receipt` có cấu trúc + danh sách draft item theo vị trí hình học. **Dùng model thật**; tự suy giảm về fallback khi weights/thiết bị không sẵn sàng (không phải stub thuần). |
+| **Kết nối đến component khác** | ← **Pipeline Orchestrator**: bước `detect_receipt` → `extract_receipt` → `reconstruct_receipt` trong chuỗi Luồng 1. → **Domain Models**: tạo `Receipt` và `ReceiptItem`. Đầu ra (`ToolResult.data`) được chuyển tiếp sang Embedding Module. |
 
 ---
 
@@ -219,8 +224,8 @@ Report Response (PDF / JSON) → Presentation Layer
 | Mục | Nội dung |
 |-----|----------|
 | **Lớp triển khai** | `src/embedding/embedder.py` |
-| **Trách nhiệm** | Nhận chuỗi văn bản chuẩn hóa từ `Receipt.canonical_text()`, dùng model `all-MiniLM-L6-v2` (sentence-transformers) để chuyển thành vector float32 384 chiều. Đảm bảo tính nhất quán của vector — cùng nội dung hóa đơn luôn cho cùng một vector để cache lookup hoạt động đúng. Hiện là stub trả về vector giả định (deterministic hash). |
-| **Kết nối đến component khác** | ← **Pipeline Orchestrator**: bước 3 (`embed_text`) trong Luồng 1, nhận `Receipt` từ OCR. → **Semantic Cache**: cung cấp vector 384 chiều cho `VectorStore.cache_lookup()` (tìm kiếm) và `VectorStore.cache_store()` (lưu sau khi LLM sinh insight). |
+| **Trách nhiệm** | Module hàm. `embed_text()` nhận chuỗi chuẩn hóa từ `Receipt.canonical_text`, dùng model `all-MiniLM-L6-v2` (sentence-transformers, cache `@lru_cache`) chuyển thành vector float32 384 chiều, L2-normalized. Cùng nội dung hóa đơn → cùng vector để cache lookup đúng. **Có dùng model thật**; nếu không nạp được model (`_ModelUnavailable`) thì suy giảm về `_stub_vector()` (hash xác định) thay vì hard-fail. |
+| **Kết nối đến component khác** | ← **Pipeline Orchestrator**: bước `embed_text` trong Luồng 1. → **Semantic Cache**: cung cấp vector 384 chiều cho `cache_lookup()` (tìm kiếm) và `cache_store()` (lưu sau khi LLM sinh insight). |
 
 ---
 
@@ -229,8 +234,8 @@ Report Response (PDF / JSON) → Presentation Layer
 | Mục | Nội dung |
 |-----|----------|
 | **Lớp triển khai** | `src/cache/vector_store.py` |
-| **Trách nhiệm** | Bọc ChromaDB client, quản lý collection vector insight. `cache_lookup()`: tính cosine similarity giữa vector mới và toàn collection — nếu max ≥ 0.9 thì trả về cached `Insight` ngay, không gọi LLM. `cache_store()`: lưu vector + metadata sau khi LLM sinh xong. `cache_delete()`: xóa document (unlearning) khi người dùng REJECT. `list_insights()` / `get_insight()`: truy vấn lịch sử insight theo `user_id`. |
-| **Kết nối đến component khác** | ← **Pipeline Orchestrator**: gọi `cache_lookup` (bước 4) và `cache_store` (bước 5b) trong Luồng 1. ← **Backend API** (`FeedbackRouter`): gọi `cache_delete(vector_id)` khi người dùng REJECT. ← **Backend API** (`InsightsRouter`): gọi `list_insights` và `get_insight` để trả về lịch sử. → **ChromaDB** (Vector DB): thao tác trực tiếp qua `chromadb.Client` — add, query, delete document. |
+| **Trách nhiệm** | Module hàm bọc ChromaDB (`chromadb.HttpClient`, collection `hnsw:space=cosine`). `cache_lookup()`: query top-1, `similarity = 1 - distance`; nếu ≥ 0.9 thì trả cached `Insight` ngay, không gọi LLM. `cache_store()`: `upsert` vector + metadata sau khi LLM sinh xong. `cache_delete()`: xóa document (unlearning) khi REJECT. `list_insights()` / `get_insight()`: truy vấn lịch sử insight theo `user_id`; `_metadata_to_insight()` dựng lại `Insight` từ metadata. |
+| **Kết nối đến component khác** | ← **Pipeline Orchestrator**: gọi `cache_lookup` rồi `cache_store` trong Luồng 1. ← **Backend API** (`feedback` router): gọi `cache_delete(vector_id)` khi REJECT. ← **Backend API** (`insights` router): gọi `list_insights` / `get_insight`. → **ChromaDB** (Vector DB): add, query, delete document. |
 
 ---
 
@@ -239,8 +244,8 @@ Report Response (PDF / JSON) → Presentation Layer
 | Mục | Nội dung |
 |-----|----------|
 | **Lớp triển khai** | `src/llm/gemini_client.py` |
-| **Trách nhiệm** | Bọc Google Generative AI SDK. Cung cấp 4 phương thức tương ứng 4 luồng: `generate_insight()` (Luồng 1), `portfolio_recommendation()` (Luồng 3), `optimize_spending()` (Luồng 4), `summarize_report()` (Luồng 5). Xây dựng prompt tối ưu, gọi Gemini 2.5 Flash, parse JSON response, xử lý lỗi (retry, parse failure). Luôn trả về `ToolResult`. |
-| **Kết nối đến component khác** | ← **Pipeline Orchestrator**: gọi `generate_insight(receipt)` khi cache miss (Luồng 1). ← **Investment Advisor Service**: gọi `portfolio_recommendation(profile, spending)` (Luồng 3, planned). ← **Optimization Service**: gọi `optimize_spending(patterns)` (Luồng 4, planned). ← **Reporting Service**: gọi `summarize_report(data)` (Luồng 5, planned). → **Gemini API** (external): gửi HTTP request đến `generativelanguage.googleapis.com`. |
+| **Trách nhiệm** | Module hàm bọc REST API Google Generative AI (gọi trực tiếp bằng `httpx`, JSON mode + `responseSchema`, retry). Ba hàm public: `generate_insight()` (Luồng 1 — summary/category/tips), `classify_receipt_items()` (phân loại item bằng model **Gemma** + fallback từ khóa tiếng Việt `_guess_category`), `generate_financial_report_review()` (Luồng 5 — nhận xét tài chính). Helper `_call_gemini()` dùng chung. Thiếu `GEMINI_API_KEY` → fallback (stub insight / khac / fallback review). Luôn trả `ToolResult`. |
+| **Kết nối đến component khác** | ← **Pipeline Orchestrator**: gọi `generate_insight(receipt)` khi cache miss + `classify_receipt_items()` (Luồng 1). ← **Reporting** (`reports` router): gọi `generate_financial_report_review()` (Luồng 5). ← **Stress Tester**: gọi lại `_call_gemini()` cho phân tích hedging (Luồng 3). → **Gemini API** (external): HTTP request đến `generativelanguage.googleapis.com`. <br>⚠️ Các method `portfolio_recommendation` / `optimize_spending` / `summarize_report` (thiết kế cũ) **không tồn tại**. |
 
 ---
 
@@ -249,8 +254,8 @@ Report Response (PDF / JSON) → Presentation Layer
 | Mục | Nội dung |
 |-----|----------|
 | **Lớp triển khai** | `src/pipeline.py`, `src/core/tool_result.py` |
-| **Trách nhiệm** | Điều phối toàn bộ 5 bước của Luồng 1 theo thứ tự: Detect → OCR → Embed → Cache Lookup → (LLM + Cache Store). Enforce `ToolResult` contract — mỗi bước phải trả về `ToolResult`; nếu `status == ERROR` thì ném `PipelineError` ngay lập tức (fail-fast). Xử lý mềm (soft-fail) khi `cache_store` thất bại — insight vẫn được trả về dù không lưu được vào cache. |
-| **Kết nối đến component khác** | ← **Backend API** (`ReceiptsRouter`): nhận `image_bytes` từ upload request. → **CV & OCR Module**: gọi `VisionDetector.detect_receipt()` và `OCRExtractor.extract_receipt()`. → **Embedding Module**: gọi `Embedder.embed_text()`. → **Semantic Cache**: gọi `VectorStore.cache_lookup()` và `cache_store()`. → **LLM Module**: gọi `GeminiClient.generate_insight()` khi cache miss. |
+| **Trách nhiệm** | Module hàm điều phối Luồng 1: Detect → OCR → Reconstruct → Embed → Cache Lookup → (LLM + Cache Store). Hai entrypoint: `analyze_receipt()` (trả `Insight`) và `analyze_receipt_details()` (trả `dict` giàu thông tin cho UI: draft receipt, detected fields, suggested transaction, item categories). Enforce `ToolResult` contract qua `_require_ok()` — bước nào `status == ERROR` thì ném `PipelineError(step, result)` (fail-fast). Soft-fail khi `cache_store` lỗi — insight vẫn trả về. |
+| **Kết nối đến component khác** | ← **Backend API** (`receipts` router): nhận `image_bytes` từ upload. → **CV & OCR Module**: gọi `detect_receipt()`, `extract_receipt()`, `reconstruct_receipt()`. → **Embedding Module**: gọi `embed_text()`. → **Semantic Cache**: gọi `cache_lookup()` / `cache_store()`. → **LLM Module**: gọi `generate_insight()` khi cache miss + `classify_receipt_items()`. |
 
 ---
 
@@ -259,8 +264,8 @@ Report Response (PDF / JSON) → Presentation Layer
 | Mục | Nội dung |
 |-----|----------|
 | **Lớp triển khai** | `src/models/expense.py` |
-| **Trách nhiệm** | Định nghĩa tất cả data contract trung tâm của hệ thống dưới dạng Pydantic BaseModel (immutable): `Receipt`, `ReceiptItem`, `Insight`, `FeedbackAction`, `InsightSource`. Cung cấp `Receipt.canonical_text()` — phương thức chuẩn hóa nội dung hóa đơn thành chuỗi nhất quán dùng cho embedding. Tự động validate kiểu dữ liệu và serialize/deserialize JSON. |
-| **Kết nối đến component khác** | ← **Tất cả component**: `Receipt` được tạo bởi OCR Module, consumed bởi Embedder và GeminiClient. `Insight` được tạo bởi GeminiClient, lưu bởi VectorStore, trả về bởi Pipeline. `FeedbackAction` được dùng bởi FeedbackRouter và VectorStore. Không phụ thuộc vào component nào khác — là lớp dữ liệu thuần túy. |
+| **Trách nhiệm** | Định nghĩa data contract trung tâm của Luồng 1 dưới dạng Pydantic `BaseModel`: `Receipt`, `ReceiptItem` (có `discount`, `category`), `Insight`, `FeedbackAction`, `InsightSource`. Cung cấp `Receipt.canonical_text` — `@property` chuẩn hóa nội dung hóa đơn thành chuỗi nhất quán dùng cho embedding. Tự động validate kiểu và serialize/deserialize JSON. |
+| **Kết nối đến component khác** | ← **Tầng xử lý Luồng 1**: `Receipt` tạo bởi reconstructor/OCR, consumed bởi `embed_text` và `generate_insight`. `Insight` tạo bởi LLM, lưu bởi vector_store, trả về bởi pipeline. `FeedbackAction` dùng bởi `feedback` router. Là lớp dữ liệu thuần túy. (DTO API tách riêng ở `src/api/schemas.py` — §4.3; ORM tách ở `src/db/models.py` — §4.9.) |
 
 ---
 
@@ -268,57 +273,101 @@ Report Response (PDF / JSON) → Presentation Layer
 
 | Mục | Nội dung |
 |-----|----------|
-| **Lớp triển khai** | `src/db/models.py` (SQLAlchemy ORM), `src/db/database.py` (async engine, session factory) |
-| **Trách nhiệm** | Quản lý kết nối async đến PostgreSQL qua SQLAlchemy + asyncpg. Định nghĩa ORM model ánh xạ tới 9 bảng PostgreSQL. Cung cấp async session factory (`get_db`) dùng làm FastAPI dependency. Xử lý migration schema (Alembic, nếu có). |
-| **Kết nối đến component khác** | ← **Auth Module**: query bảng `users` để đăng ký và xác thực. ← **Cash Flow Service** (planned): CRUD bảng `wallets`, `transactions`, `goals`. ← **Investment Advisor** (planned): CRUD bảng `risk_profiles`, `investment_recommendations`. ← **Optimization Service** (planned): đọc `transactions`, ghi `alerts`. ← **Reporting Service** (planned): đọc `transactions`, ghi `reports`, `charts`. → **PostgreSQL**: kết nối qua asyncpg driver. |
+| **Lớp triển khai** | `src/db/models.py` (SQLAlchemy ORM), `src/db/base.py` (`Base`, async engine, `AsyncSessionLocal`, `get_db`, `ensure_database`) |
+| **Trách nhiệm** | Quản lý kết nối async đến PostgreSQL qua SQLAlchemy + asyncpg. Định nghĩa 8 ORM model (`User`, `ReceiptRecord`, `ReceiptItemRecord`, `Transaction`, `InvestmentProfile`, `InvestmentAsset`, `FinancialGoal`, `UserPreferences`). Cung cấp dependency `get_db`. `ensure_database()` tạo bảng (`create_all`) + lightweight migration (thêm cột `receipt_items.category`). |
+| **Kết nối đến component khác** | ← **Auth Module**: đọc/ghi `users`. ← **Cash Flow** (`transactions`/`goals`/`preferences` routes): CRUD `transactions`, `financial_goals`, `user_preferences`. ← **Investment** (`investment` route): CRUD `investment_profiles`, `investment_assets`. ← **Receipts/Pipeline**: ghi `receipts`, `receipt_items`. ← **Reporting** (`reports` route): đọc `transactions`, `financial_goals`, `investment_assets`. → **PostgreSQL**: kết nối qua asyncpg driver. |
 
 ---
 
-### 3.10 Cash Flow Service
+### 3.10 Cash Flow — Transactions / Goals / Preferences ✅ Implemented
 
 | Mục | Nội dung |
 |-----|----------|
-| **Lớp triển khai** | `src/services/cashflow.py` 🔧 Planned |
-| **Trách nhiệm** | Tạo và lưu giao dịch mới (INCOME / EXPENSE / TRANSFER). Cập nhật số dư ví sau mỗi giao dịch (cộng / trừ theo loại). Kiểm tra và cập nhật tiến độ các mục tiêu tiết kiệm (`goals.current_amount`). Cung cấp tóm tắt dòng tiền theo kỳ cho các luồng khác (Luồng 3, 4, 5). |
-| **Kết nối đến component khác** | ← **Backend API** (Luồng 2 routes, planned): nhận request tạo/cập nhật giao dịch. → **Database Layer**: INSERT/UPDATE bảng `transactions`, `wallets`, `goals`. → **Domain Models**: dùng `Transaction`, `Wallet`, `Goal` Pydantic model làm data contract. ← **Optimization Service** và **Reporting Service**: cung cấp `get_spending_summary()` làm đầu vào phân tích. |
+| **Lớp triển khai** | `src/api/routes/transactions.py`, `src/api/routes/goals.py`, `src/api/routes/preferences.py` |
+| **Trách nhiệm** | Logic Luồng 2 hiện thực **trực tiếp trong các route** (chưa tách service riêng). `transactions`: tạo/sửa/liệt kê giao dịch (`expense`/`income`), tùy chọn gắn `receipt_id` + draft items. `goals`: CRUD mục tiêu; `status`/`progress_percent` tính ở `GoalResponse.from_goal()`. `preferences`: đọc/ghi cờ thông báo người dùng. **Không có khái niệm `wallet`/số dư ví** trong code hiện tại. |
+| **Kết nối đến component khác** | ← **Backend API**: là các router được mount trong `main.py`. → **Database Layer**: CRUD `transactions`, `financial_goals`, `user_preferences`. → **Schemas**: dùng `Transaction*`, `Goal*`, `Preferences*` DTO. ← **Reporting** (`reports` route): đọc lại `transactions`/`financial_goals` để tổng hợp. |
 
 ---
 
-### 3.11 Investment Advisor
+### 3.11 Investment & Stress Test — PA3 ✅ Implemented
 
 | Mục | Nội dung |
 |-----|----------|
-| **Lớp triển khai** | `src/services/investment.py` 🔧 Planned |
-| **Trách nhiệm** | Thu thập và đánh giá hồ sơ rủi ro người dùng (khẩu vị rủi ro, horizon đầu tư, nhu cầu thanh khoản). Tính thu nhập khả dụng từ lịch sử giao dịch. Gọi LLM Module để sinh đề xuất phân bổ tài sản (cổ phiếu, trái phiếu, quỹ ETF) phù hợp với hồ sơ. Lưu đề xuất vào PostgreSQL. |
-| **Kết nối đến component khác** | ← **Backend API** (Luồng 3 routes, planned): nhận questionnaire hồ sơ rủi ro và yêu cầu đề xuất. → **LLM Module**: gọi `GeminiClient.portfolio_recommendation(profile, spending_data)`. → **Database Layer**: đọc `transactions` (tính disposable income); ghi `risk_profiles`, `investment_recommendations`. ← **Cash Flow Service**: đọc dữ liệu chi tiêu để tính disposable income. |
+| **Lớp triển khai** | `src/api/routes/investment.py`, `src/core/stress_tester.py`, `src/core/market_data.py` |
+| **Trách nhiệm** | Theo dõi danh mục thực tế (không phải tư vấn từ questionnaire). `investment` route: CRUD `investment_profiles` (khẩu vị rủi ro, vốn, mục tiêu) và `investment_assets` (cổ phiếu/vàng/tiết kiệm/crypto). `stress_tester.run_portfolio_stress_test()`: định giá danh mục theo giá thật, chạy 4 kịch bản shock, tính `vulnerability_score` + `diversification_score` (Simpson Index), gọi Gemini sinh `overall_analysis` + `hedging_strategies` (có fallback tĩnh). |
+| **Kết nối đến component khác** | ← **Backend API** (`investment` router): `GET/POST /profile`, `GET/POST/DELETE /portfolio`, `GET /stress-test`. → **Market Data** (`src/core/market_data.py`): lấy giá real-time. → **LLM Module**: `_call_gemini()` cho hedging. → **Database Layer**: `investment_profiles`, `investment_assets`. (Không có bảng `risk_profiles`/`investment_recommendations`.) |
 
 ---
 
-### 3.12 Optimization Service
+### 3.12 Resource Optimization 🔧 Planned
 
 | Mục | Nội dung |
 |-----|----------|
-| **Lớp triển khai** | `src/services/optimization.py` 🔧 Planned |
-| **Trách nhiệm** | Phân tích pattern chi tiêu N ngày gần nhất của người dùng. Phát hiện chi tiêu bất thường (anomaly detection). So sánh chi tiêu thực tế với mục tiêu để tính budget gap. Gọi LLM để sinh gợi ý tối ưu ngân sách. Tạo `Alert` khi vượt ngưỡng (overspending, goal at risk, anomaly) và lưu vào PostgreSQL. |
-| **Kết nối đến component khác** | ← **Scheduled Job** hoặc **Backend API** (Luồng 4, planned): trigger phân tích định kỳ hoặc theo yêu cầu. → **LLM Module**: gọi `GeminiClient.optimize_spending(patterns)`. → **Database Layer**: đọc `transactions`, `goals`; ghi `alerts`. ← **Cash Flow Service**: lấy spending summary làm đầu vào phân tích. → **Notification System** (external, planned): gửi push notification / email khi tạo Alert mức cao. |
+| **Lớp triển khai** | _(chưa có)_ — dự kiến `src/services/optimization.py` |
+| **Trạng thái hiện tại** | Chưa triển khai. Trong code mới chỉ có **cờ bật/tắt** ở bảng `user_preferences` (`anomaly_alerts`, `goal_reminders`, `rebalance_suggestions`) — chưa có logic phân tích, anomaly detection, alert hay bảng `alerts`. |
+| **Trách nhiệm (dự kiến)** | Phân tích pattern chi tiêu N ngày gần nhất, phát hiện chi tiêu bất thường, so sánh với mục tiêu để tính budget gap, gọi LLM sinh gợi ý tối ưu, tạo cảnh báo khi vượt ngưỡng. |
+| **Kết nối (dự kiến)** | ← **Scheduled Job / Backend API** (Luồng 4): trigger phân tích. → **LLM Module**. → **Database Layer**: đọc `transactions`, `financial_goals`; cần thêm bảng `alerts`. → **Notification System** (external). |
 
 ---
 
-### 3.13 Reporting Service
+### 3.13 Reporting ✅ Implemented
 
 | Mục | Nội dung |
 |-----|----------|
-| **Lớp triển khai** | `src/services/reporting.py` 🔧 Planned |
-| **Trách nhiệm** | Tổng hợp dữ liệu giao dịch theo kỳ (tháng / quý / năm): tổng thu, tổng chi, phân bổ theo danh mục. Gọi LLM để tạo tóm tắt ngôn ngữ tự nhiên từ dữ liệu tổng hợp. Sinh metadata biểu đồ (PIE, BAR, LINE) cho Presentation Layer render. Lưu `Report` và `Chart` vào PostgreSQL. |
-| **Kết nối đến component khác** | ← **Backend API** (Luồng 5 routes, planned): nhận yêu cầu tạo báo cáo (period, type). → **LLM Module**: gọi `GeminiClient.summarize_report(summary_data)`. → **Database Layer**: đọc `transactions`, `wallets`; ghi `reports`, `charts`. ← **Cash Flow Service**: lấy raw transaction data để aggregate. → **Presentation Layer**: trả về `Report` + `Chart` metadata cho frontend render biểu đồ. |
+| **Lớp triển khai** | `src/api/routes/reports.py` (`GET /reports/summary`) |
+| **Trách nhiệm** | Báo cáo **tính on-demand** trong route (không lưu bảng `reports`/`charts`). Theo `range`: load `transactions`/`financial_goals`/`investment_assets`, tổng hợp income/expense/net/saving_rate, phân bổ danh mục, giao dịch lớn nhất, tóm tắt đầu tư + tiến độ mục tiêu. Gọi LLM (`generate_financial_report_review`) sinh nhận xét, có `_fallback_*` khi LLM không sẵn sàng. Trả `FinancialReportResponse`; **Presentation Layer tự render biểu đồ** từ `category_breakdown`. |
+| **Kết nối đến component khác** | ← **Backend API** (`reports` router): nhận `range`. → **Database Layer**: đọc `transactions`, `financial_goals`, `investment_assets`. → **LLM Module**: `generate_financial_report_review(payload)`. → **Presentation Layer**: trả `FinancialReportResponse` (gồm số liệu biểu đồ). |
 
 ---
 
 ## 4. Class Diagrams — Thiết kế Hướng đối tượng
 
-### 4.1 Domain Models — Luồng 1 (`src/models/expense.py`)
+> **Quy ước biểu diễn (đọc trước khi xem sơ đồ).** SpendSense AI chia thành hai nhóm thành phần, và sơ đồ phản ánh đúng cách code được viết — không lý tưởng hóa thành OOP nếu thực tế không phải vậy:
+>
+> - **Tầng dữ liệu — hướng đối tượng thực sự:** các *class* Pydantic (`ToolResult`, domain model, request/response schema), SQLAlchemy ORM model, và một số `@dataclass`. Đây là nơi OOP được dùng đúng nghĩa — có thuộc tính, validation, và một số operation (factory `classmethod`, `property`, `update_balance`-style helper). Các mục §4.1–4.3, §4.9, §4.13 mô tả đầy đủ những class này.
+> - **Tầng xử lý — module hàm thuần:** pipeline, vision, OCR, embedding, semantic cache, LLM, market-data, stress-test và các API route. Mỗi đơn vị là một *module* gồm các hàm không giữ state (model nặng được cache qua `@lru_cache` / singleton ở mức module), luôn trả về `ToolResult` hoặc `dict`. Chúng được biểu diễn bằng stereotype `<<module>>` liệt kê các operation public, kèm quan hệ *uses / produces* tới class dữ liệu. Đây là lựa chọn thiết kế có chủ đích (idiomatic Python, KISS/YAGNI) — không bọc hàm không-state vào "class giả" chỉ để có sơ đồ class.
 
-Các lớp biểu diễn dữ liệu nghiệp vụ của luồng phân tích hóa đơn. Tất cả là Pydantic BaseModel (immutable).
+---
+
+### 4.1 Core Contract — ToolResult (`src/core/tool_result.py`)
+
+`ToolResult` là class Pydantic chuẩn hóa giá trị trả về của **mọi** bước trong tầng xử lý, cho phép orchestrator rẽ nhánh theo `status` mà không cần biết hình dạng payload.
+
+```mermaid
+classDiagram
+    class ToolStatus {
+        <<enumeration>>
+        SUCCESS
+        WARNING
+        ERROR
+    }
+
+    class ToolResult {
+        +ToolStatus status
+        +str summary
+        +Any data
+        +list~str~ next_actions
+        +dict~str_str~ artifacts
+        +str error_hint
+        +success(summary, data, next_actions, artifacts)$ ToolResult
+        +warning(summary, data, next_actions, error_hint)$ ToolResult
+        +error(summary, error_hint, next_actions)$ ToolResult
+        +ok() bool
+        +failed() bool
+    }
+
+    ToolResult --> ToolStatus : status
+```
+
+**Mô tả:**
+- Ba factory `classmethod` (`success`, `warning`, `error`) là cách duy nhất nên dùng để tạo `ToolResult` — chúng set sẵn `status` và default `next_actions` hợp lý.
+- Hai `@property` `ok` / `failed` được pipeline dùng để kiểm tra nhanh sau mỗi bước.
+
+---
+
+### 4.2 Domain Models — Receipt Pipeline (`src/models/expense.py`)
+
+Các class Pydantic biểu diễn dữ liệu nghiệp vụ của luồng phân tích hóa đơn (Luồng 1).
 
 ```mermaid
 classDiagram
@@ -338,7 +387,9 @@ classDiagram
         +str name
         +float quantity
         +float unit_price
+        +float discount
         +float total_price
+        +str category
     }
 
     class Receipt {
@@ -365,524 +416,625 @@ classDiagram
 
     Receipt "1" *-- "1..*" ReceiptItem : contains
     Insight --> InsightSource : source
-    Insight --> Receipt : analyzes
+    Insight ..> Receipt : analyzes (receipt_id)
 ```
 
 **Mô tả:**
-- `ReceiptItem` đại diện một dòng mặt hàng (tên, số lượng, đơn giá, thành tiền).
-- `Receipt.canonical_text()` tạo chuỗi chuẩn hóa dùng để embedding — đảm bảo nhất quán khi lookup vector DB.
-- `Insight` chứa kết quả phân tích AI: tóm tắt, danh mục, gợi ý tiết kiệm, và nguồn gốc (CACHE / LLM).
+- `ReceiptItem` gồm cả `discount` và `category` (item được Gemma phân loại) — khác với bản thiết kế ban đầu.
+- `canonical_text` là một `@property` (không phải method): tạo chuỗi chuẩn hóa `merchant | items | total` dùng để embedding, đảm bảo cùng hóa đơn → cùng vector khi lookup cache.
+- `Insight` mang `source` (`cache`/`llm`) và `similarity_score` để truy vết hit cache.
 
 ---
 
-### 4.2 Backend API (`main.py`, `src/api/routes/`, `src/api/schemas.py`)
+### 4.3 API Schemas — DTO Layer (`src/api/schemas.py`)
 
-Tầng giao tiếp giữa Presentation và Application. FastAPI app tổ chức theo Router, mỗi router quản lý một nhóm endpoint.
+Toàn bộ request/response là Pydantic `BaseModel`, tự validate input và serialize output; không bao giờ trả thẳng ORM model ra ngoài. Dưới đây là các DTO tiêu biểu (lược bớt nhóm market/report con để dễ đọc).
 
 ```mermaid
 classDiagram
-    class App {
-        +FastAPI app
-        +include_router(auth_router)
-        +include_router(receipts_router)
-        +include_router(feedback_router)
-        +include_router(insights_router)
-    }
-
-    class AuthRouter {
-        +POST /auth/register(body: RegisterRequest) AuthResponse
-        +POST /auth/login(body: LoginRequest) AuthResponse
-        +GET /auth/me(user: User) UserResponse
-    }
-
-    class ReceiptsRouter {
-        +POST /receipts/analyze(file: UploadFile, user: User) AnalyzeResponse
-    }
-
-    class FeedbackRouter {
-        +POST /feedback/{insight_id}(body: FeedbackRequest, user: User) FeedbackResponse
-    }
-
-    class InsightsRouter {
-        +GET /health() HealthResponse
-        +GET /insights(user: User, limit, offset) InsightListResponse
-        +GET /insights/{insight_id}(user: User) InsightResponse
-    }
-
     class RegisterRequest {
         +EmailStr email
         +str password
     }
-
     class LoginRequest {
         +EmailStr email
         +str password
     }
-
-    class FeedbackRequest {
-        +FeedbackAction action
-        +str vector_id
+    class GoogleLoginRequest {
+        +str credential
     }
-
+    class UserResponse {
+        +UUID id
+        +str email
+        +datetime created_at
+    }
     class AuthResponse {
         +str access_token
-        +str token_type
         +UserResponse user
+    }
+
+    class TransactionCreateRequest {
+        +str type
+        +float amount
+        +str currency
+        +str category
+        +str description
+        +str merchant
+        +date transaction_date
+        +UUID receipt_id
+        +list~ReceiptItemInput~ receipt_items
+    }
+    class TransactionResponse {
+        +UUID id
+        +UUID user_id
+        +UUID receipt_id
+        +str type
+        +float amount
+        +str category
+        +datetime created_at
+        +from_transaction(txn)$ TransactionResponse
     }
 
     class AnalyzeResponse {
         +InsightResponse insight
-        +str message
+        +str vector_id
+        +ReceiptDraftResponse receipt
+        +SuggestedTransactionResponse suggested_transaction
+        +list~DetectedFieldResponse~ detected_fields
+    }
+    class InsightResponse {
+        +UUID insight_id
+        +UUID receipt_id
+        +str summary
+        +str category
+        +list~str~ tips
+        +str source
+        +float similarity_score
+        +from_insight(insight)$ InsightResponse
     }
 
-    class InsightListResponse {
-        +list~InsightResponse~ insights
-        +int total
-        +int limit
-        +int offset
+    class GoalResponse {
+        +UUID id
+        +str title
+        +float target_amount
+        +float current_amount
+        +str status
+        +float progress_percent
+        +from_goal(goal)$ GoalResponse
     }
 
-    App *-- AuthRouter : mounts
-    App *-- ReceiptsRouter : mounts
-    App *-- FeedbackRouter : mounts
-    App *-- InsightsRouter : mounts
-    AuthRouter --> RegisterRequest : accepts
-    AuthRouter --> LoginRequest : accepts
-    AuthRouter --> AuthResponse : returns
-    ReceiptsRouter --> AnalyzeResponse : returns
-    FeedbackRouter --> FeedbackRequest : accepts
-    InsightsRouter --> InsightListResponse : returns
+    AuthResponse --> UserResponse : embeds
+    AnalyzeResponse --> InsightResponse : embeds
 ```
 
 **Mô tả:**
-- `App` là FastAPI instance khởi tạo trong `main.py` — gắn tất cả router và lifespan event (khởi tạo DB connection, ChromaDB client).
-- Mỗi Router tương ứng một file trong `src/api/routes/`, tách biệt theo nghiệp vụ.
-- Các `*Request` / `*Response` schema là Pydantic BaseModel — tự động validate input và serialize output, không bao giờ trả thẳng SQLAlchemy ORM model.
+- Nhiều response dùng `model_config = ConfigDict(from_attributes=True)` để map trực tiếp từ ORM (vd `TransactionResponse.from_transaction`, `UserResponse`).
+- Một số schema chứa **logic dẫn xuất**: `GoalResponse.from_goal()` tự tính `progress_percent` và `status` (achieved/on-track/at-risk); `InsightResponse.from_insight()` ánh xạ enum `source` sang chuỗi.
+- Các nhóm DTO khác (không vẽ hết): `StressTestResponse` + `ScenarioResultResponse` + `HedgingStrategyResponse` (§4.10), `FinancialReportResponse` + 5 DTO con (§4.12), `MarketSymbolResponse` / `MarketIntelligenceResponse` (§4.11), `PreferencesResponse`, `InvestmentProfile/AssetResponse`.
 
 ---
 
-### 4.3 Pipeline Orchestrator & ToolResult Contract (`src/pipeline.py`, `src/core/tool_result.py`)
+### 4.4 Receipt Pipeline «module» (`src/pipeline.py`)
 
-`ToolResult` là contract chuẩn hóa — mọi bước trong pipeline đều trả về kiểu này.
+Module điều phối Luồng 1. Đây **không phải một class** — `analyze_receipt` / `analyze_receipt_details` là hàm module-level; chỉ `PipelineError` là class (Exception). Mỗi bước gọi một module xử lý khác và kiểm tra `ToolResult` qua `_require_ok` (fail-fast).
 
 ```mermaid
 classDiagram
-    class ToolStatus {
-        <<enumeration>>
-        SUCCESS
-        WARNING
-        ERROR
-    }
-
-    class ToolResult {
-        +ToolStatus status
-        +str summary
-        +dict data
-        +list~str~ next_actions
-        +list artifacts
-        +str error_hint
-        +success(summary, data, next_actions, artifacts)$ ToolResult
-        +warning(summary, data, next_actions)$ ToolResult
-        +error(summary, error_hint, next_actions)$ ToolResult
+    class pipeline {
+        <<module>>
+        +analyze_receipt(image_bytes) Insight
+        +analyze_receipt_details(image_bytes) dict
+        -_generate_and_store(receipt, vector, skip_store) Insight
+        -_require_ok(result, step) void
+        -_apply_item_categories(receipt, draft_items, categories) void
     }
 
     class PipelineError {
+        <<exception>>
         +str step
         +ToolResult result
     }
 
-    class Pipeline {
-        +analyze_receipt(image_bytes) Insight
-        -_require_ok(result, step_name) void
-        -_generate_and_store(receipt, vector) Insight
+    class detector {
+        <<module>>
+    }
+    class ocr {
+        <<module>>
+    }
+    class reconstructor {
+        <<module>>
+    }
+    class embedder {
+        <<module>>
+    }
+    class vector_store {
+        <<module>>
+    }
+    class gemini_client {
+        <<module>>
     }
 
-    ToolResult --> ToolStatus : has status
-    PipelineError --> ToolResult : wraps failed result
-    Pipeline --> PipelineError : raises on failure
-    Pipeline --> VisionDetector : calls detect_receipt()
-    Pipeline --> OCRExtractor : calls extract_receipt()
-    Pipeline --> Embedder : calls embed_text()
-    Pipeline --> VectorStore : calls cache_lookup / cache_store
-    Pipeline --> GeminiClient : calls generate_insight()
+    pipeline ..> PipelineError : raises on ERROR
+    pipeline ..> detector : detect_receipt()
+    pipeline ..> ocr : extract_receipt()
+    pipeline ..> reconstructor : reconstruct_receipt()
+    pipeline ..> embedder : embed_text()
+    pipeline ..> vector_store : cache_lookup() / cache_store()
+    pipeline ..> gemini_client : generate_insight() / classify_receipt_items()
+    pipeline ..> Insight : produces
 ```
 
 **Mô tả:**
-- `Pipeline.analyze_receipt()` là điểm vào duy nhất của Luồng 1. `_require_ok()` kiểm tra status sau mỗi bước — nếu ERROR thì ném `PipelineError` ngay lập tức.
-- `_generate_and_store()` gọi LLM rồi lưu cache; lỗi khi lưu cache được xử lý mềm (soft-fail).
+- `analyze_receipt()` trả về `Insight` (Luồng 1 cơ bản); `analyze_receipt_details()` trả về `dict` giàu thông tin hơn cho UI (draft receipt, detected fields, suggested transaction, item categories).
+- `_require_ok()` ném `PipelineError(step, result)` ngay khi một bước trả `status == ERROR`. Lỗi `cache_store` được xử lý mềm (soft-fail) — insight vẫn trả về.
 
 ---
 
-### 4.4 Vision & OCR Processing — Luồng 1 (`src/vision/`)
+### 4.5 Vision & OCR «modules» (`src/vision/`)
+
+Ba module hàm thuần. Mỗi bước trả `ToolResult`; hai `@dataclass` nội bộ (`_ImageCandidate`, `_OCRLine`) là phần OOP duy nhất ở đây. **Đã dùng model thật** (YOLOv11 + VietOCR), tự suy giảm về fallback khi weights/thiết bị không sẵn sàng — không còn là stub thuần.
 
 ```mermaid
 classDiagram
-    class VisionDetector {
-        -str model_path
-        -float confidence_threshold
+    class detector {
+        <<module>>
         +detect_receipt(image_bytes) ToolResult
-        -_load_model() YOLOv11
-        -_crop_region(image, bbox) bytes
+        +warm_up_detector() dict
+        -_run_model(image_bytes) tuple
+        -_crop_likely_receipt_region(image) image
+        -_load_yolo(model_path) YOLO
     }
 
-    class OCRExtractor {
-        +extract_receipt(image_bytes) ToolResult
-        -_parse_lines(raw_lines) Receipt
-        -_extract_merchant(lines) str
-        -_extract_date(lines) date
-        -_extract_items(lines) list~ReceiptItem~
-        -_extract_total(lines) float
+    class ocr {
+        <<module>>
+        +extract_receipt(image_bytes, detections) ToolResult
+        +warm_up_ocr() void
+        -_run_ocr(image_bytes) tuple
+        -_fields_and_items_from_lines(lines) tuple
+        -_vietocr_predictor() Predictor
     }
 
-    VisionDetector --> ToolResult : returns
-    OCRExtractor --> ToolResult : returns
-    OCRExtractor --> Receipt : produces
-    VisionDetector ..> OCRExtractor : feeds cropped image
+    class reconstructor {
+        <<module>>
+        +reconstruct_receipt(fields) tuple~Receipt_list~
+        -_best_price_matches(fields) list
+        -_orphan_value_rows(fields) list
+    }
+
+    class _ImageCandidate {
+        <<dataclass>>
+        +str label
+        +Any image
+    }
+    class _OCRLine {
+        <<dataclass>>
+        +str text
+        +int top
+        +int height
+    }
+
+    detector ..> _ImageCandidate : uses
+    ocr ..> _OCRLine : uses
+    detector ..> ocr : feeds detected boxes / cropped image
+    ocr ..> reconstructor : detected fields
+    reconstructor ..> Receipt : produces
 ```
 
 **Mô tả:**
-- `VisionDetector` dùng YOLOv11 để phát hiện và cắt vùng hóa đơn từ ảnh gốc (hiện là stub).
-- `OCRExtractor` nhận ảnh đã crop, dùng VietOCR trích xuất và parse thành `Receipt` có cấu trúc (hiện là stub).
+- `detector.detect_receipt()` chạy YOLOv11 ([detector.py](../src/vision/detector.py)), phát hiện vùng/field hóa đơn và crop; `warm_up_detector()` được gọi lúc startup.
+- `ocr.extract_receipt()` chạy VietOCR ([ocr.py](../src/vision/ocr.py)), đọc text từng box/line.
+- `reconstructor.reconstruct_receipt()` ghép các field đã OCR (merchant, item, price, discount) thành `Receipt` + danh sách draft item theo vị trí hình học.
 
 ---
 
-### 4.5 Embedding Module — Luồng 1 (`src/embedding/embedder.py`)
+### 4.6 Embedding «module» (`src/embedding/embedder.py`)
 
 ```mermaid
 classDiagram
-    class Embedder {
-        -str model_name
-        -SentenceTransformer model
+    class embedder {
+        <<module>>
         +embed_text(text) ToolResult
+        +warm_up_embedder() dict
+        -_encode(text) list~float~
+        -_load_model() SentenceTransformer
+        -_stub_vector(text) list~float~
     }
 
-    Embedder --> ToolResult : returns
-    Embedder --> Receipt : reads canonical_text()
+    class _ModelUnavailable {
+        <<exception>>
+    }
+
+    embedder ..> _ModelUnavailable : raises when model missing
+    embedder ..> ToolResult : returns (data = list~float~)
 ```
 
 **Mô tả:**
-- `Embedder` dùng sentence-transformers (`all-MiniLM-L6-v2`, 384 chiều) để chuyển `Receipt.canonical_text()` thành vector số thực.
-- Kết quả vector nằm trong `ToolResult.data["vector"]` — được chuyển tiếp sang `VectorStore` để lookup hoặc store.
-- Hiện là stub: trả về vector giả định (deterministic hash) để có thể test pipeline mà không cần model thực.
+- `embed_text()` dùng sentence-transformers (`all-MiniLM-L6-v2`, 384 chiều, L2-normalized) qua `_load_model()` được cache bằng `@lru_cache`.
+- **Suy giảm có chủ đích:** nếu model không nạp được (`_ModelUnavailable`), trả `ToolResult.warning` kèm `_stub_vector()` (hash xác định) thay vì hard-fail — pipeline vẫn chạy được offline.
+- `warm_up_embedder()` nạp sẵn weights lúc startup để lần lookup đầu không bị trễ.
 
 ---
 
-### 4.6 Semantic Cache — Luồng 1 (`src/cache/vector_store.py`)
+### 4.7 Semantic Cache «module» (`src/cache/vector_store.py`)
+
+Module bọc ChromaDB. Client/collection được tạo theo nhu cầu qua helper `_collection()` (không giữ state instance).
 
 ```mermaid
 classDiagram
-    class VectorStore {
-        -str host
-        -int port
-        -str collection_name
-        -float similarity_threshold
-        -chromadb.Client client
-        -chromadb.Collection collection
+    class vector_store {
+        <<module>>
         +cache_lookup(vector, receipt_id) ToolResult
         +cache_store(vector, insight, user_id) ToolResult
         +list_insights(user_id, limit, offset) ToolResult
         +get_insight(insight_id, user_id) ToolResult
         +cache_delete(vector_id) ToolResult
-        -_to_insight(metadata) Insight
+        -_metadata_to_insight(meta) Insight
+        -_collection() chromadb.Collection
+        -_chroma_client() chromadb.HttpClient
     }
 
-    VectorStore --> ToolResult : returns
-    VectorStore --> Insight : reconstructs from metadata
-    VectorStore --> chromadb.Collection : queries / mutates
+    vector_store ..> Insight : reconstructs from metadata
+    vector_store ..> ToolResult : returns
+    vector_store ..> chromadb.Collection : query / upsert / delete
 ```
 
 **Mô tả:**
-- `cache_lookup()` tính cosine similarity giữa vector mới và toàn bộ collection; nếu max similarity ≥ `similarity_threshold` (0.9) thì trả về cached `Insight` ngay — không gọi LLM.
-- `cache_store()` lưu vector + metadata insight vào ChromaDB sau khi LLM sinh xong.
-- `cache_delete()` được gọi khi người dùng REJECT insight — xóa document khỏi collection để "unlearn" pattern đó.
-- `_to_insight()` reconstruct `Insight` Pydantic object từ ChromaDB metadata dict.
+- `cache_lookup()` query top-1 theo cosine distance; `similarity = 1 - distance`. Nếu `similarity ≥ similarity_threshold` (0.9, từ config) → trả cached `Insight` (`source=CACHE`), bỏ qua LLM.
+- `cache_store()` `upsert` vector + metadata sau khi LLM sinh insight; trả `vector_id` mới sinh.
+- `cache_delete()` gọi khi người dùng REJECT — xóa document để "unlearn".
+- `get_insight()` kiểm tra quyền sở hữu qua `user_id` trong metadata (trả ERROR nếu khác chủ).
+- `_metadata_to_insight()` dựng lại `Insight` từ metadata dict.
 
 ---
 
-### 4.8 LLM Integration — Luồng 1, 3, 4, 5 (`src/llm/gemini_client.py`)
+### 4.8 LLM «module» (`src/llm/gemini_client.py`)
+
+Module bọc REST API của Google Generative AI (gọi trực tiếp bằng `httpx`, không qua SDK). Dùng JSON mode + `responseSchema`, có retry và fallback `NotImplementedError` khi thiếu `GEMINI_API_KEY`.
 
 ```mermaid
 classDiagram
-    class GeminiClient {
-        -str api_key
-        -str model_name
-        -genai.GenerativeModel model
+    class gemini_client {
+        <<module>>
         +generate_insight(receipt) ToolResult
-        +portfolio_recommendation(risk_profile, spending_data) ToolResult
-        +optimize_spending(spending_patterns) ToolResult
-        +summarize_report(report_data) ToolResult
-        -_build_prompt(receipt) str
-        -_parse_json_response(text) dict
-        -_strip_markdown_fences(text) str
+        +classify_receipt_items(items) ToolResult
+        +generate_financial_report_review(report_payload) ToolResult
+        -_call_gemini(prompt, model_name, response_schema, timeout, retries) str
+        -_parse_response(raw_json) dict
+        -_guess_category(name) str
     }
 
-    GeminiClient --> ToolResult : returns
-    GeminiClient --> Insight : produces (source=LLM)
-    GeminiClient --> Receipt : consumes (Luồng 1)
-    GeminiClient --> RiskProfile : consumes (Luồng 3)
+    gemini_client ..> Receipt : consumes (generate_insight)
+    gemini_client ..> Insight : produces (source=LLM)
+    gemini_client ..> ToolResult : returns
 ```
 
-**Mô tả:**
-- `generate_insight()` phân tích hóa đơn và trả về JSON (summary, category, tips) — dùng cho Luồng 1.
-- `portfolio_recommendation()` đề xuất phân bổ tài sản theo hồ sơ rủi ro — dùng cho Luồng 3 (planned).
-- `optimize_spending()` phát hiện chi tiêu bất thường và tạo cảnh báo — dùng cho Luồng 4 (planned).
-- `summarize_report()` tổng hợp báo cáo định kỳ — dùng cho Luồng 5 (planned).
+**Mô tả (đúng theo code):**
+- `generate_insight(receipt)` → `Insight` (summary, category, tips) cho Luồng 1; thiếu API key → trả stub insight (`ToolResult.warning`).
+- `classify_receipt_items(items)` → ánh xạ `item_id → category` (dùng model **Gemma** riêng + `responseSchema` enum); fallback `_guess_category()` theo từ khóa tiếng Việt khi LLM lỗi.
+- `generate_financial_report_review(report_payload)` → nhận xét tài chính cá nhân hóa (summary/observations/suggested_actions) cho Luồng 5 (§4.12).
+- `_call_gemini()` là helper dùng chung — **cũng được `stress_tester` gọi lại** (§4.10) cho phân tích hedging.
+- Các method "planned" trong bản thiết kế cũ (`portfolio_recommendation`, `optimize_spending`, `summarize_report`) **không tồn tại**; chức năng tương ứng nằm ở `stress_tester` và `reports`.
 
 ---
 
-### 4.9 Cash Flow Service — Luồng 2 (`src/services/cashflow.py`) 🔧 Planned
+### 4.9 Persistence — SQLAlchemy ORM (`src/db/models.py`, `src/db/base.py`)
+
+Tầng lưu trữ là các ORM model thật (kế thừa `Base`), ánh xạ tới **8 bảng** PostgreSQL. Đây là lớp OOP cốt lõi của tầng dữ liệu quan hệ. (Chi tiết cột & ràng buộc xem §5.)
 
 ```mermaid
 classDiagram
-    class Wallet {
-        +UUID id
-        +UUID user_id
-        +str name
-        +float balance
-        +str currency
-        +WalletType wallet_type
-        +datetime created_at
-        +update_balance(amount, transaction_type) void
+    class Base {
+        <<DeclarativeBase>>
     }
 
-    class WalletType {
-        <<enumeration>>
-        CASH
-        BANK_ACCOUNT
-        E_WALLET
-        CREDIT_CARD
-    }
-
-    class Transaction {
-        +UUID id
-        +UUID user_id
-        +UUID wallet_id
-        +float amount
-        +TransactionType transaction_type
-        +str category
-        +str description
-        +datetime transaction_date
-        +UUID insight_id
-    }
-
-    class TransactionType {
-        <<enumeration>>
-        INCOME
-        EXPENSE
-        TRANSFER
-    }
-
-    class Goal {
-        +UUID id
-        +UUID user_id
-        +str name
-        +float target_amount
-        +float current_amount
-        +date deadline
-        +GoalStatus status
-        +check_progress() float
-    }
-
-    class GoalStatus {
-        <<enumeration>>
-        ACTIVE
-        COMPLETED
-        CANCELLED
-    }
-
-    class CashFlowService {
-        +create_transaction(user_id, data) Transaction
-        +update_wallet_balance(wallet_id, amount, type) Wallet
-        +get_spending_summary(user_id, period) dict
-        +check_goal_progress(user_id) list~Goal~
-    }
-
-    CashFlowService --> Wallet : manages
-    CashFlowService --> Transaction : creates
-    CashFlowService --> Goal : monitors
-    Wallet --> WalletType : has type
-    Transaction --> TransactionType : has type
-    Transaction --> Wallet : belongs to
-    Goal --> GoalStatus : has status
-```
-
-**Mô tả:**
-- `CashFlowService` là service chính của Luồng 2, điều phối tạo giao dịch, cập nhật số dư ví và kiểm tra tiến độ mục tiêu.
-- `Wallet` hỗ trợ nhiều loại ví: tiền mặt, tài khoản ngân hàng, ví điện tử, thẻ tín dụng.
-- `Transaction` liên kết với `insight_id` để map giao dịch với insight từ Luồng 1 (hóa đơn).
-
----
-
-### 4.10 Investment Advisor — Luồng 3 (`src/services/investment.py`) 🔧 Planned
-
-```mermaid
-classDiagram
-    class RiskTolerance {
-        <<enumeration>>
-        CONSERVATIVE
-        MODERATE
-        AGGRESSIVE
-    }
-
-    class RiskProfile {
-        +UUID id
-        +UUID user_id
-        +RiskTolerance tolerance
-        +int investment_horizon_months
-        +float liquidity_need_percent
-        +datetime assessed_at
-    }
-
-    class InvestmentRecommendation {
-        +UUID id
-        +UUID user_id
-        +UUID risk_profile_id
-        +dict asset_allocation
-        +list~str~ fund_suggestions
-        +str rationale
-        +float expected_return
-        +datetime created_at
-    }
-
-    class InvestmentAdvisorService {
-        +assess_risk_profile(user_id, questionnaire) RiskProfile
-        +generate_recommendation(user_id) InvestmentRecommendation
-        -_calculate_disposable_income(user_id) float
-        -_call_llm_advisor(profile, spending) dict
-    }
-
-    InvestmentAdvisorService --> RiskProfile : creates / reads
-    InvestmentAdvisorService --> InvestmentRecommendation : creates
-    InvestmentAdvisorService --> GeminiClient : calls portfolio_recommendation()
-    InvestmentRecommendation --> RiskProfile : based on
-    RiskProfile --> RiskTolerance : has tolerance
-```
-
-**Mô tả:**
-- `RiskProfile` lưu kết quả đánh giá hồ sơ rủi ro người dùng (khẩu vị rủi ro, horizon đầu tư, nhu cầu thanh khoản).
-- `InvestmentAdvisorService` tính thu nhập khả dụng từ lịch sử giao dịch, sau đó gọi Gemini để đề xuất phân bổ tài sản.
-
----
-
-### 4.11 Resource Optimization Service — Luồng 4 (`src/services/optimization.py`) 🔧 Planned
-
-```mermaid
-classDiagram
-    class AlertType {
-        <<enumeration>>
-        OVERSPENDING
-        GOAL_AT_RISK
-        ANOMALY_DETECTED
-        BUDGET_EXCEEDED
-    }
-
-    class Alert {
-        +UUID id
-        +UUID user_id
-        +AlertType alert_type
-        +str message
-        +float threshold
-        +float actual_value
-        +bool is_read
-        +datetime created_at
-    }
-
-    class OptimizationService {
-        +analyze_spending_patterns(user_id, days) dict
-        +detect_anomalies(user_id) list~Alert~
-        +generate_budget_recommendations(user_id) list~str~
-        -_compare_with_goals(user_id, patterns) dict
-        -_call_llm_optimizer(patterns) list~str~
-    }
-
-    OptimizationService --> Alert : creates
-    OptimizationService --> GeminiClient : calls optimize_spending()
-    Alert --> AlertType : has type
-```
-
-**Mô tả:**
-- `OptimizationService` phân tích pattern chi tiêu N ngày gần nhất, phát hiện bất thường, so sánh với mục tiêu tài chính.
-- Tạo `Alert` khi phát hiện vi phạm ngưỡng (chi tiêu vượt mức, mục tiêu có nguy cơ, anomaly).
-- Gọi `GeminiClient.optimize_spending()` để sinh gợi ý tối ưu ngân sách bằng ngôn ngữ tự nhiên.
-
----
-
-### 4.12 Reporting Service — Luồng 5 (`src/services/reporting.py`) 🔧 Planned
-
-```mermaid
-classDiagram
-    class Report {
-        +UUID id
-        +UUID user_id
-        +str report_type
-        +date period_start
-        +date period_end
-        +dict summary_data
-        +str llm_summary
-        +datetime generated_at
-    }
-
-    class Chart {
-        +UUID id
-        +UUID report_id
-        +str chart_type
-        +str title
-        +dict chart_data
-        +datetime created_at
-    }
-
-    class ReportingService {
-        +generate_monthly_report(user_id, month, year) Report
-        +generate_charts(report_id) list~Chart~
-        +get_report_history(user_id) list~Report~
-        -_aggregate_transactions(user_id, period) dict
-        -_call_llm_summarizer(data) str
-    }
-
-    ReportingService --> Report : creates
-    ReportingService --> Chart : generates
-    ReportingService --> GeminiClient : calls summarize_report()
-    Report "1" *-- "1..*" Chart : contains
-```
-
-**Mô tả:**
-- `ReportingService` tổng hợp dữ liệu giao dịch theo kỳ (tháng / quý / năm) thành `summary_data`.
-- Gọi `GeminiClient.summarize_report()` để tạo tóm tắt ngôn ngữ tự nhiên (`llm_summary`).
-- Sinh metadata biểu đồ `Chart` (PIE, BAR, LINE) để Presentation Layer render — không chứa logic render.
-
----
-
-### 4.13 Authentication Layer (`src/auth/`, `src/db/models.py`)
-
-```mermaid
-classDiagram
     class User {
         +UUID id
         +str email
         +str hashed_password
         +datetime created_at
     }
-
-    class AuthService {
-        +hash_password(plain_password) str$
-        +verify_password(plain_password, hashed_password) bool$
-        +create_access_token(user_id) str$
-        +decode_token(token) UUID$
+    class ReceiptRecord {
+        +UUID id
+        +UUID user_id
+        +str merchant
+        +date purchase_date
+        +float total_amount
+        +str currency
+        +str raw_text
+        +datetime created_at
+    }
+    class ReceiptItemRecord {
+        +UUID id
+        +UUID receipt_id
+        +str name
+        +float quantity
+        +float unit_price
+        +float total_price
+        +str category
+    }
+    class Transaction {
+        +UUID id
+        +UUID user_id
+        +UUID receipt_id
+        +str type
+        +float amount
+        +str currency
+        +str category
+        +str description
+        +str merchant
+        +date transaction_date
+        +datetime created_at
+        +datetime updated_at
+    }
+    class InvestmentProfile {
+        +UUID id
+        +UUID user_id
+        +str risk_appetite
+        +float capital
+        +str goal
+    }
+    class InvestmentAsset {
+        +UUID id
+        +UUID user_id
+        +str symbol
+        +str name
+        +str type
+        +float quantity
+        +float purchase_price
+        +str color
+    }
+    class FinancialGoal {
+        +UUID id
+        +UUID user_id
+        +str title
+        +str emoji
+        +float target_amount
+        +float current_amount
+        +float monthly_target
+        +date deadline
+        +str ai_note
+    }
+    class UserPreferences {
+        +UUID id
+        +UUID user_id
+        +bool weekly_report
+        +bool rebalance_suggestions
+        +bool anomaly_alerts
+        +bool goal_reminders
     }
 
-    class AuthDependency {
-        +get_current_user(credentials, db) User
-    }
+    Base <|-- User
+    Base <|-- ReceiptRecord
+    Base <|-- ReceiptItemRecord
+    Base <|-- Transaction
+    Base <|-- InvestmentProfile
+    Base <|-- InvestmentAsset
+    Base <|-- FinancialGoal
+    Base <|-- UserPreferences
 
-    AuthService --> User : creates token for
-    AuthDependency --> AuthService : calls decode_token()
-    AuthDependency --> User : returns authenticated user
+    User "1" --> "0..*" ReceiptRecord : receipts
+    User "1" --> "0..*" Transaction : transactions
+    User "1" --> "0..1" InvestmentProfile : investment_profile
+    User "1" --> "0..*" InvestmentAsset : investment_assets
+    User "1" --> "0..*" FinancialGoal : goals
+    User "1" --> "0..1" UserPreferences : preferences
+    ReceiptRecord "1" *-- "0..*" ReceiptItemRecord : items
+    ReceiptRecord "1" --> "0..*" Transaction : transactions
 ```
 
 **Mô tả:**
-- `User` là SQLAlchemy ORM model, ánh xạ trực tiếp tới bảng `users` trong PostgreSQL.
-- `AuthService` chứa static method: hash bcrypt, verify bcrypt, tạo JWT, decode JWT.
-- `AuthDependency.get_current_user()` là FastAPI dependency — inject vào mọi route cần xác thực.
+- Mỗi class là một `Base` (DeclarativeBase) ORM với `Mapped[...]` columns và `relationship()` hai chiều (`back_populates`).
+- `ReceiptRecord` / `ReceiptItemRecord` lưu hóa đơn đã phân tích; `Transaction.receipt_id` (nullable) liên kết giao dịch với hóa đơn nguồn.
+- `InvestmentProfile` và `UserPreferences` là quan hệ **1–1** với `User` (`user_id` unique, `cascade="all, delete-orphan"`).
+- Module `db/base.py` cung cấp `engine`, `AsyncSessionLocal`, dependency `get_db()`, và `ensure_database()` (auto `create_all` + lightweight migration thêm cột `receipt_items.category`).
+
+---
+
+### 4.10 Investment & Stress Test «modules» (`src/core/stress_tester.py`, `src/core/market_data.py`)
+
+Module PA3 — theo dõi danh mục và stress-test vĩ mô. Đây là **module hàm**, vận hành trên ORM `InvestmentProfile` / `InvestmentAsset` (§4.9) và DTO `StressTestResponse` (§4.3). Route `/investment` lắp ráp dữ liệu rồi gọi các hàm này.
+
+```mermaid
+classDiagram
+    class stress_tester {
+        <<module>>
+        +run_portfolio_stress_test(profile_dict, assets_list, current_prices) dict
+        +calculate_diversification_score(asset_weights) float
+        -_get_default_hedges(idle_assets, worst_scenario, idle_cash) list
+        -_stress_test_response_schema() dict
+        +SHOCK_IMPACTS : dict
+        +SCENARIO_NAMES_VI : dict
+    }
+
+    class market_data {
+        <<module>>
+        +get_market_prices(symbols) dict~str,float~
+        +fetch_stock_prices(symbols) dict
+        +fetch_crypto_price_usd(symbol) float
+        +fetch_gold_price_vnd() float
+        -_coalesce_price(candidates) float
+    }
+
+    class StressTestResponse {
+        +float portfolio_value
+        +float vulnerability_score
+        +float diversification_score
+        +str worst_scenario
+        +list~ScenarioResultResponse~ scenarios
+        +list~HedgingStrategyResponse~ hedging_strategies
+    }
+
+    stress_tester ..> market_data : current prices
+    stress_tester ..> gemini_client : _call_gemini() for hedging advice
+    stress_tester ..> InvestmentProfile : reads (capital, risk_appetite, goal)
+    stress_tester ..> InvestmentAsset : reads holdings
+    stress_tester ..> StressTestResponse : data shaped into
+```
+
+**Mô tả:**
+- `run_portfolio_stress_test()` định giá danh mục theo giá thị trường thật, chạy 4 kịch bản shock (`SHOCK_IMPACTS`: lạm phát / sụp đổ công nghệ / suy thoái / khủng hoảng crypto), tính `vulnerability_score` và `diversification_score` (Simpson Index), rồi gọi Gemini sinh `overall_analysis` + `hedging_strategies` (có fallback tĩnh `_get_default_hedges`).
+- `market_data.get_market_prices()` định tuyến theo loại symbol: cổ phiếu VN (`vnstock`), crypto (Binance, quy đổi USD→VND), vàng SJC; `_coalesce_price()` lọc `NaN` để không bỏ qua fallback.
+
+---
+
+### 4.11 Market Intelligence «modules» (`src/services/`)
+
+Hai service module cung cấp dữ liệu thị trường thời gian thực cho route `/market` (và bối cảnh cho PA3). Đều là hàm thuần + cache trong-process (`_get_cached`/`_set_cached`), sản sinh DTO `MarketSymbolResponse` / `MarketIntelligenceResponse`.
+
+```mermaid
+classDiagram
+    class market_data_service {
+        <<module>>
+        +get_vn_stock_quotes(symbols, sort) list~dict~
+        +get_vn_index_quote() dict
+        +get_vn_quote(symbol) dict
+        -_quotes_from_records(records) list
+        -_allow_vnstock_call() bool
+    }
+
+    class market_context_service {
+        <<module>>
+        +build_market_context(vietnam_symbols) dict
+        -_build_vietnam_market(symbols) dict
+        -_parse_rss_items(xml_text, category) list
+        -_dedupe_news(items) list
+    }
+
+    class MarketSymbolResponse {
+        +str symbol
+        +str name
+        +float price
+        +float change_percent
+        +str source
+    }
+    class MarketIntelligenceResponse {
+        +datetime updated_at
+        +list~MarketSymbolResponse~ symbols
+        +dict market_context
+    }
+
+    market_data_service ..> MarketSymbolResponse : shapes quotes
+    market_context_service ..> market_data_service : VN quotes + news
+    market_context_service ..> MarketIntelligenceResponse : market_context
+```
+
+**Mô tả:**
+- `market_data_service` lấy giá cổ phiếu/chỉ số VN (qua `vnstock`, có throttle `_allow_vnstock_call` + cache); chuẩn hóa record thành quote dict, có `_error_quote` khi nguồn lỗi.
+- `market_context_service.build_market_context()` tổng hợp thị trường VN + tin tức RSS (parse, dedupe) thành `market_context` cho dashboard.
+
+---
+
+### 4.12 Reporting «module» (`src/api/routes/reports.py`)
+
+Báo cáo tài chính được **tính on-demand** (không lưu bảng `reports`/`charts`). Route `GET /reports/summary` đọc dữ liệu, tổng hợp trong-bộ-nhớ, gọi LLM sinh nhận xét, rồi trả `FinancialReportResponse`.
+
+```mermaid
+classDiagram
+    class reports {
+        <<module / APIRouter>>
+        +get_financial_report(range, user, db) FinancialReportResponse
+        -_load_transactions(user_id, start, end, db) list
+        -_load_goals(user_id, db) list
+        -_load_assets(user_id, db) list
+        -_category_breakdown(txns, total_expense) list
+        -_investment_summary(assets) ReportInvestmentSummaryResponse
+        -_goal_progress(goal) ReportGoalProgressResponse
+        -_ai_review(payload) ReportAiReviewResponse
+    }
+
+    class FinancialReportResponse {
+        +str range
+        +float income
+        +float expense
+        +float net
+        +float saving_rate
+        +list~ReportCategoryBreakdownResponse~ category_breakdown
+        +ReportInvestmentSummaryResponse investment
+        +list~ReportGoalProgressResponse~ goals
+        +ReportAiReviewResponse ai_review
+    }
+
+    reports ..> Transaction : aggregates
+    reports ..> FinancialGoal : progress
+    reports ..> InvestmentAsset : valuation
+    reports ..> gemini_client : generate_financial_report_review()
+    reports ..> FinancialReportResponse : returns
+```
+
+**Mô tả:**
+- Aggregate giao dịch theo `range` (income/expense/net/saving_rate, phân bổ danh mục, giao dịch lớn nhất), tóm tắt đầu tư & tiến độ mục tiêu.
+- `_ai_review()` gọi `gemini_client.generate_financial_report_review()`; khi LLM không sẵn sàng dùng `_fallback_summary/observations/actions` (đánh dấu `source="fallback"`).
+- Biểu đồ do Presentation Layer render từ `category_breakdown` — backend chỉ trả số liệu, không sinh metadata chart riêng.
+
+---
+
+### 4.13 Authentication (`src/auth/`, `src/db/models.py`)
+
+Auth gồm hai module hàm (`service`, `dependencies`) + một `@dataclass` (`AuthenticatedUser`, dùng làm fallback khi DB offline) + ORM `User`.
+
+```mermaid
+classDiagram
+    class auth_service {
+        <<module>>
+        +hash_password(plain) str
+        +verify_password(plain, hashed) bool
+        +user_id_from_email(email) UUID
+        +create_access_token(user_id, email) str
+        +decode_token_payload(token) dict
+        +decode_token(token) str
+    }
+
+    class auth_dependencies {
+        <<module>>
+        +get_current_user(credentials, db) User_or_AuthenticatedUser
+    }
+
+    class AuthenticatedUser {
+        <<dataclass>>
+        +UUID id
+        +str email
+        +datetime created_at
+    }
+
+    class User {
+        <<ORM>>
+        +UUID id
+        +str email
+        +str hashed_password
+        +datetime created_at
+    }
+
+    auth_dependencies ..> auth_service : decode_token_payload()
+    auth_dependencies ..> User : db.get(User, id)
+    auth_dependencies ..> AuthenticatedUser : fallback when DB offline
+```
+
+**Mô tả:**
+- `auth_service` dùng `passlib`/bcrypt để hash & verify; JWT ký/giải bằng `PyJWT` (HS256). `user_id_from_email()` sinh UUID xác định (uuid5) để hỗ trợ Google login.
+- `get_current_user()` là FastAPI dependency: giải JWT → `db.get(User)`. Nếu DB không reachable, trả `AuthenticatedUser` dựng từ claim trong token (degrade graceful) thay vì 500.
+
+---
+
+### 4.14 API Routing Layer (`main.py`, `src/api/routes/`)
+
+Tầng giao tiếp là các `APIRouter` của FastAPI (mỗi file một router, mỗi endpoint là một `async def`). `create_app()` trong `main.py` mount **10 router** và cấu hình CORS + lifespan (warm-up YOLO/VietOCR/Embedding lúc startup).
+
+| Router (prefix) | Endpoint chính | Trả về |
+|---|---|---|
+| `auth` (`/auth`) | `POST /register`, `POST /login`, `POST /google`, `GET /me` | `AuthResponse` / `UserResponse` |
+| `receipts` (`/receipts`) | `POST /analyze` (UploadFile) | `AnalyzeResponse` |
+| `transactions` (`/transactions`) | `POST`, `PATCH /{id}`, `GET` | `TransactionResponse` / `TransactionListResponse` |
+| `feedback` (`/feedback`) | `POST /{insight_id}` | `FeedbackResponse` |
+| `insights` (—) | `GET /health`, `GET /insights`, `GET /insights/{id}` | `InsightListResponse` / `InsightResponse` |
+| `investment` (`/investment`) | `GET/POST /profile`, `GET/POST /portfolio`, `DELETE /portfolio/{id}`, `GET /stress-test` | `Investment*Response` / `StressTestResponse` |
+| `goals` (`/goals`) | `GET`, `POST`, `PATCH /{id}`, `DELETE /{id}` | `GoalResponse` / `GoalListResponse` |
+| `preferences` (`/preferences`) | `GET`, `PUT` | `PreferencesResponse` |
+| `reports` (`/reports`) | `GET /summary` | `FinancialReportResponse` |
+| `market` (`/market`) | `GET /vn-stocks`, `GET /vn-index`, `GET /overview` | `MarketSymbolResponse` / `MarketIntelligenceResponse` |
+
+**Mô tả:**
+- Mọi route (trừ auth & health) inject `get_current_user` qua `Depends()` để xác thực JWT.
+- Router là instance `APIRouter` (object) nhưng handler là hàm — không có "class Router" tự định nghĩa.
 
 ---
 
@@ -890,7 +1042,7 @@ classDiagram
 
 ### 5.1 Entity Relationship Diagram (PostgreSQL)
 
-SpendSense AI sử dụng PostgreSQL cho dữ liệu quan hệ (9 bảng) và ChromaDB cho vector cache.
+SpendSense AI dùng PostgreSQL cho dữ liệu quan hệ (**8 bảng**, ánh xạ 1–1 với ORM model ở §4.9) và ChromaDB cho vector cache (§5.2). Schema được tạo qua `Base.metadata.create_all` + lightweight migration trong `ensure_database()`.
 
 ```mermaid
 erDiagram
@@ -901,102 +1053,101 @@ erDiagram
         TIMESTAMP created_at
     }
 
-    wallets {
+    receipts {
         UUID id PK
         UUID user_id FK
-        VARCHAR name
-        DECIMAL balance
+        VARCHAR merchant
+        DATE purchase_date
+        FLOAT total_amount
         VARCHAR currency
-        VARCHAR wallet_type
+        VARCHAR raw_text
         TIMESTAMP created_at
+    }
+
+    receipt_items {
+        UUID id PK
+        UUID receipt_id FK
+        VARCHAR name
+        FLOAT quantity
+        FLOAT unit_price
+        FLOAT total_price
+        VARCHAR category
     }
 
     transactions {
         UUID id PK
         UUID user_id FK
-        UUID wallet_id FK
-        UUID insight_id
-        DECIMAL amount
-        VARCHAR transaction_type
+        UUID receipt_id FK
+        VARCHAR type
+        FLOAT amount
+        VARCHAR currency
         VARCHAR category
-        TEXT description
-        TIMESTAMP transaction_date
+        VARCHAR description
+        VARCHAR merchant
+        DATE transaction_date
         TIMESTAMP created_at
+        TIMESTAMP updated_at
     }
 
-    goals {
+    investment_profiles {
+        UUID id PK
+        UUID user_id FK "unique"
+        VARCHAR risk_appetite
+        FLOAT capital
+        VARCHAR goal
+        TIMESTAMP created_at
+        TIMESTAMP updated_at
+    }
+
+    investment_assets {
         UUID id PK
         UUID user_id FK
+        VARCHAR symbol
         VARCHAR name
-        DECIMAL target_amount
-        DECIMAL current_amount
-        DATE deadline
-        VARCHAR status
+        VARCHAR type
+        FLOAT quantity
+        FLOAT purchase_price
+        VARCHAR color
         TIMESTAMP created_at
+        TIMESTAMP updated_at
     }
 
-    alerts {
+    financial_goals {
         UUID id PK
         UUID user_id FK
-        VARCHAR alert_type
-        TEXT message
-        DECIMAL threshold
-        DECIMAL actual_value
-        BOOLEAN is_read
-        TIMESTAMP created_at
-    }
-
-    risk_profiles {
-        UUID id PK
-        UUID user_id FK
-        VARCHAR tolerance
-        INT investment_horizon_months
-        DECIMAL liquidity_need_percent
-        TIMESTAMP assessed_at
-    }
-
-    investment_recommendations {
-        UUID id PK
-        UUID user_id FK
-        UUID risk_profile_id FK
-        JSONB asset_allocation
-        JSONB fund_suggestions
-        TEXT rationale
-        DECIMAL expected_return
-        TIMESTAMP created_at
-    }
-
-    reports {
-        UUID id PK
-        UUID user_id FK
-        VARCHAR report_type
-        DATE period_start
-        DATE period_end
-        JSONB summary_data
-        TEXT llm_summary
-        TIMESTAMP generated_at
-    }
-
-    charts {
-        UUID id PK
-        UUID report_id FK
-        VARCHAR chart_type
         VARCHAR title
-        JSONB chart_data
+        VARCHAR emoji
+        FLOAT target_amount
+        FLOAT current_amount
+        FLOAT monthly_target
+        DATE deadline
+        VARCHAR ai_note
         TIMESTAMP created_at
+        TIMESTAMP updated_at
     }
 
-    users ||--o{ wallets : "owns"
+    user_preferences {
+        UUID id PK
+        UUID user_id FK "unique"
+        BOOLEAN weekly_report
+        BOOLEAN rebalance_suggestions
+        BOOLEAN anomaly_alerts
+        BOOLEAN goal_reminders
+        TIMESTAMP created_at
+        TIMESTAMP updated_at
+    }
+
+    users ||--o{ receipts : "uploads"
     users ||--o{ transactions : "makes"
-    users ||--o{ goals : "sets"
-    users ||--o{ alerts : "receives"
-    users ||--o{ risk_profiles : "has"
-    users ||--o{ investment_recommendations : "gets"
-    users ||--o{ reports : "generates"
-    wallets ||--o{ transactions : "records"
-    risk_profiles ||--o{ investment_recommendations : "basis for"
-    reports ||--o{ charts : "contains"
+    users ||--o| investment_profiles : "has (1-1)"
+    users ||--o{ investment_assets : "holds"
+    users ||--o{ financial_goals : "sets"
+    users ||--o| user_preferences : "configures (1-1)"
+    receipts ||--o{ receipt_items : "contains"
+    receipts ||--o{ transactions : "sources"
 ```
+
+> **Lưu ý kiểu dữ liệu:** ORM hiện dùng `Float` cho số tiền (không phải `DECIMAL`) và lưu enum dạng `VARCHAR` (vd `transactions.type` = `expense|income`, `investment_assets.type` = `stock|gold|saving|crypto`). Chưa có bảng `wallets`, `alerts`, `risk_profiles`, `investment_recommendations`, `reports`, `charts` — các chức năng tương ứng hiện tính on-demand hoặc chưa triển khai.
 
 ---
 
@@ -1006,17 +1157,19 @@ ChromaDB lưu insight dưới dạng **document** gồm ba phần: ID, Embedding
 
 | Trường metadata | Kiểu | Mô tả |
 |-----------------|------|-------|
-| `user_id` | str (UUID) | Liên kết với `users.id` — lọc insight theo người dùng |
+| `insight_id` | str (UUID) | ID của `Insight` (dùng dựng lại object khi cache hit) |
 | `receipt_id` | str (UUID) | ID của `Receipt` đã phân tích |
 | `summary` | str | Tóm tắt chi tiêu do AI tạo |
-| `category` | str | Danh mục (food, transport, shopping...) |
+| `category` | str | Danh mục (an-uong, di-chuyen, mua-sam...) |
 | `tips` | str (JSON array) | Danh sách gợi ý tiết kiệm |
-| `source` | str | `"LLM"` hoặc `"CACHE"` |
-| `created_at` | str (ISO datetime) | Thời điểm lưu vào cache |
+| `vector_id` | str (UUID) | ID document trong ChromaDB (dùng để `cache_delete` khi REJECT) |
+| `user_id` | str (UUID) | Liên kết với `users.id` — lọc insight theo người dùng |
 
-**Embedding:** vector 384 chiều (float32) từ sentence-transformers `all-MiniLM-L6-v2`.
+> **Lưu ý:** `source` không được lưu trong metadata — khi cache hit, `source` được gán cứng `CACHE` lúc dựng lại `Insight`. Collection cấu hình `hnsw:space = "cosine"`.
 
-**Semantic Cache:** cosine similarity ≥ 0.9 → trả về cached insight, bỏ qua LLM (tiết kiệm ~80% chi phí API).
+**Embedding:** vector 384 chiều (float32, L2-normalized) từ sentence-transformers `all-MiniLM-L6-v2`.
+
+**Semantic Cache:** `similarity = 1 - cosine_distance`; nếu ≥ `similarity_threshold` (0.9) → trả về cached insight, bỏ qua LLM (tiết kiệm ~80% chi phí API).
 
 **Unlearning:** REJECT → `cache_delete(vector_id)` xóa document khỏi collection.
 
@@ -1028,104 +1181,105 @@ ChromaDB lưu insight dưới dạng **document** gồm ba phần: ID, Embedding
 
 | Cột | Kiểu | Ràng buộc | Mô tả |
 |-----|------|-----------|-------|
-| `id` | UUID | PK | Khóa chính tự sinh (gen_random_uuid()) |
+| `id` | UUID | PK | Khóa chính (`uuid4`) |
 | `email` | VARCHAR(255) | UNIQUE, NOT NULL | Email đăng nhập |
 | `hashed_password` | VARCHAR(255) | NOT NULL | Mật khẩu băm bcrypt |
-| `created_at` | TIMESTAMP | NOT NULL, DEFAULT now() | Thời điểm tạo tài khoản |
+| `created_at` | TIMESTAMP | DEFAULT utcnow | Thời điểm tạo tài khoản |
 
-#### Bảng `wallets`
+#### Bảng `receipts`
 
 | Cột | Kiểu | Mô tả |
 |-----|------|-------|
 | `id` | UUID PK | Khóa chính |
-| `user_id` | UUID FK | Chủ sở hữu ví |
-| `name` | VARCHAR(100) | Tên ví (ví dụ: "Tài khoản MB Bank") |
-| `balance` | DECIMAL(15,2) | Số dư hiện tại |
-| `currency` | VARCHAR(10) | Đơn vị tiền (VND, USD) |
-| `wallet_type` | VARCHAR(20) | CASH / BANK_ACCOUNT / E_WALLET / CREDIT_CARD |
+| `user_id` | UUID FK → users | Chủ hóa đơn |
+| `merchant` | VARCHAR(255) | Tên cửa hàng |
+| `purchase_date` | DATE (nullable) | Ngày mua |
+| `total_amount` | FLOAT | Tổng tiền |
+| `currency` | VARCHAR(8) | Đơn vị tiền (mặc định VND) |
+| `raw_text` | VARCHAR(4000) | Text thô từ OCR |
+| `created_at` | TIMESTAMP | Thời điểm lưu |
+
+#### Bảng `receipt_items`
+
+| Cột | Kiểu | Mô tả |
+|-----|------|-------|
+| `id` | UUID PK | Khóa chính |
+| `receipt_id` | UUID FK → receipts | Hóa đơn chứa item (cascade delete) |
+| `name` | VARCHAR(500) | Tên mặt hàng |
+| `quantity` | FLOAT | Số lượng |
+| `unit_price` | FLOAT | Đơn giá |
+| `total_price` | FLOAT | Thành tiền |
+| `category` | VARCHAR(80) | Danh mục item (Gemma phân loại; mặc định `khac`) |
 
 #### Bảng `transactions`
 
 | Cột | Kiểu | Mô tả |
 |-----|------|-------|
 | `id` | UUID PK | Khóa chính |
-| `user_id` | UUID FK | Người thực hiện giao dịch |
-| `wallet_id` | UUID FK | Ví được dùng |
-| `insight_id` | UUID | Liên kết với insight từ Luồng 1 (nullable) |
-| `amount` | DECIMAL(15,2) | Số tiền |
-| `transaction_type` | VARCHAR(20) | INCOME / EXPENSE / TRANSFER |
-| `category` | VARCHAR(100) | Danh mục chi tiêu |
-| `description` | TEXT | Mô tả giao dịch |
-| `transaction_date` | TIMESTAMP | Thời điểm thực hiện |
+| `user_id` | UUID FK → users | Người thực hiện giao dịch |
+| `receipt_id` | UUID FK → receipts (nullable) | Hóa đơn nguồn (nếu tạo từ Luồng 1) |
+| `type` | VARCHAR(16) | `expense` / `income` |
+| `amount` | FLOAT | Số tiền |
+| `currency` | VARCHAR(8) | Đơn vị tiền |
+| `category` | VARCHAR(80) | Danh mục chi tiêu |
+| `description` | VARCHAR(500) | Mô tả giao dịch |
+| `merchant` | VARCHAR(255) | Tên cửa hàng |
+| `transaction_date` | DATE (nullable) | Ngày giao dịch |
+| `created_at` / `updated_at` | TIMESTAMP | Thời điểm tạo / cập nhật |
 
-#### Bảng `goals`
-
-| Cột | Kiểu | Mô tả |
-|-----|------|-------|
-| `id` | UUID PK | Khóa chính |
-| `user_id` | UUID FK | Chủ mục tiêu |
-| `name` | VARCHAR(200) | Tên mục tiêu (ví dụ: "Mua xe máy") |
-| `target_amount` | DECIMAL(15,2) | Số tiền mục tiêu |
-| `current_amount` | DECIMAL(15,2) | Số tiền đã tích lũy |
-| `deadline` | DATE | Hạn chót |
-| `status` | VARCHAR(20) | ACTIVE / COMPLETED / CANCELLED |
-
-#### Bảng `alerts`
+#### Bảng `investment_profiles` (1–1 với `users`)
 
 | Cột | Kiểu | Mô tả |
 |-----|------|-------|
 | `id` | UUID PK | Khóa chính |
-| `user_id` | UUID FK | Người nhận cảnh báo |
-| `alert_type` | VARCHAR(50) | OVERSPENDING / GOAL_AT_RISK / ANOMALY_DETECTED / BUDGET_EXCEEDED |
-| `message` | TEXT | Nội dung cảnh báo |
-| `threshold` | DECIMAL(15,2) | Ngưỡng cảnh báo |
-| `actual_value` | DECIMAL(15,2) | Giá trị thực tế vi phạm |
-| `is_read` | BOOLEAN | Đã đọc chưa |
+| `user_id` | UUID FK → users, UNIQUE | Chủ hồ sơ đầu tư |
+| `risk_appetite` | VARCHAR(50) | conservative / moderate / aggressive |
+| `capital` | FLOAT | Tổng vốn đầu tư (VND) |
+| `goal` | VARCHAR(500) | Mục tiêu đầu tư (text tự do) |
+| `created_at` / `updated_at` | TIMESTAMP | Thời điểm tạo / cập nhật |
 
-#### Bảng `risk_profiles`
-
-| Cột | Kiểu | Mô tả |
-|-----|------|-------|
-| `id` | UUID PK | Khóa chính |
-| `user_id` | UUID FK | Chủ hồ sơ |
-| `tolerance` | VARCHAR(20) | CONSERVATIVE / MODERATE / AGGRESSIVE |
-| `investment_horizon_months` | INT | Thời gian đầu tư (tháng) |
-| `liquidity_need_percent` | DECIMAL(5,2) | % tài sản cần thanh khoản ngay |
-| `assessed_at` | TIMESTAMP | Thời điểm đánh giá |
-
-#### Bảng `investment_recommendations`
+#### Bảng `investment_assets`
 
 | Cột | Kiểu | Mô tả |
 |-----|------|-------|
 | `id` | UUID PK | Khóa chính |
-| `user_id` | UUID FK | Người nhận đề xuất |
-| `risk_profile_id` | UUID FK | Hồ sơ rủi ro cơ sở |
-| `asset_allocation` | JSONB | Phân bổ tài sản (% cổ phiếu, trái phiếu, tiền mặt...) |
-| `fund_suggestions` | JSONB | Danh sách quỹ / ETF gợi ý |
-| `rationale` | TEXT | Giải thích lý do đề xuất (từ LLM) |
-| `expected_return` | DECIMAL(5,2) | % lợi nhuận kỳ vọng hàng năm |
+| `user_id` | UUID FK → users | Chủ tài sản (cascade delete) |
+| `symbol` | VARCHAR(50) | Mã (FPT, BTC, GOLD...) |
+| `name` | VARCHAR(255) | Tên hiển thị |
+| `type` | VARCHAR(50) | stock / gold / saving / crypto |
+| `quantity` | FLOAT | Số lượng nắm giữ |
+| `purchase_price` | FLOAT | Giá mua (VND) |
+| `color` | VARCHAR(20) | Màu hiển thị biểu đồ |
+| `created_at` / `updated_at` | TIMESTAMP | Thời điểm tạo / cập nhật |
 
-#### Bảng `reports`
-
-| Cột | Kiểu | Mô tả |
-|-----|------|-------|
-| `id` | UUID PK | Khóa chính |
-| `user_id` | UUID FK | Chủ báo cáo |
-| `report_type` | VARCHAR(50) | MONTHLY / QUARTERLY / ANNUAL / CUSTOM |
-| `period_start` | DATE | Ngày bắt đầu kỳ báo cáo |
-| `period_end` | DATE | Ngày kết thúc kỳ báo cáo |
-| `summary_data` | JSONB | Dữ liệu tổng hợp (tổng thu, chi, theo danh mục) |
-| `llm_summary` | TEXT | Tóm tắt tự nhiên do Gemini tạo |
-
-#### Bảng `charts`
+#### Bảng `financial_goals`
 
 | Cột | Kiểu | Mô tả |
 |-----|------|-------|
 | `id` | UUID PK | Khóa chính |
-| `report_id` | UUID FK | Báo cáo chứa biểu đồ này |
-| `chart_type` | VARCHAR(50) | PIE / BAR / LINE / AREA |
-| `title` | VARCHAR(200) | Tiêu đề biểu đồ |
-| `chart_data` | JSONB | Dữ liệu biểu đồ (labels, datasets) |
+| `user_id` | UUID FK → users | Chủ mục tiêu (cascade delete) |
+| `title` | VARCHAR(255) | Tên mục tiêu |
+| `emoji` | VARCHAR(16) | Biểu tượng (mặc định 🎯) |
+| `target_amount` | FLOAT | Số tiền mục tiêu |
+| `current_amount` | FLOAT | Số tiền đã tích lũy |
+| `monthly_target` | FLOAT | Mức tích lũy mục tiêu/tháng |
+| `deadline` | DATE (nullable) | Hạn chót |
+| `ai_note` | VARCHAR(1000) | Ghi chú do AI tạo |
+| `created_at` / `updated_at` | TIMESTAMP | Thời điểm tạo / cập nhật |
+
+> `status` (achieved/on-track/at-risk) và `progress_percent` **không lưu DB** — được tính ở `GoalResponse.from_goal()` (§4.3).
+
+#### Bảng `user_preferences` (1–1 với `users`)
+
+| Cột | Kiểu | Mô tả |
+|-----|------|-------|
+| `id` | UUID PK | Khóa chính |
+| `user_id` | UUID FK → users, UNIQUE | Chủ cấu hình |
+| `weekly_report` | BOOLEAN | Bật báo cáo tuần (mặc định true) |
+| `rebalance_suggestions` | BOOLEAN | Gợi ý tái cân bằng danh mục (mặc định false) |
+| `anomaly_alerts` | BOOLEAN | Cảnh báo chi tiêu bất thường (mặc định true) |
+| `goal_reminders` | BOOLEAN | Nhắc tiến độ mục tiêu (mặc định true) |
+| `created_at` / `updated_at` | TIMESTAMP | Thời điểm tạo / cập nhật |
 
 ---
 
@@ -1140,20 +1294,24 @@ Client → POST /receipts/analyze (image file)
 [Auth Dependency] → validate JWT → resolve User
     │
     ▼
-[Pipeline.analyze_receipt(image_bytes)]
+[pipeline.analyze_receipt_details(image_bytes)]
     │
-    ├─[1] VisionDetector.detect_receipt()     → ToolResult {cropped_bytes}
-    ├─[2] OCRExtractor.extract_receipt()       → ToolResult {Receipt}
-    ├─[3] Embedder.embed_text(canonical_text)  → ToolResult {vector[384]}
-    ├─[4] VectorStore.cache_lookup(vector)
+    ├─[1] detector.detect_receipt()            → ToolResult {detections, cropped}
+    ├─[2] ocr.extract_receipt()                → ToolResult {fields}
+    ├─[3] reconstructor.reconstruct_receipt()  → Receipt + draft items
+    ├─[4] embedder.embed_text(canonical_text)  → ToolResult {vector[384]}
+    ├─[5] vector_store.cache_lookup(vector)
     │       ├─ HIT (sim ≥ 0.9) → return Insight (source=CACHE)
     │       └─ MISS
-    │             ├─[5a] GeminiClient.generate_insight(Receipt)
-    │             └─[5b] VectorStore.cache_store(vector, Insight)
+    │             ├─[6a] gemini_client.generate_insight(Receipt)
+    │             ├─[6b] gemini_client.classify_receipt_items(items)
+    │             └─[6c] vector_store.cache_store(vector, Insight)  (soft-fail)
     │
     ▼
-[API] serialize Insight → AnalyzeResponse → 200 OK
+[API] serialize → AnalyzeResponse → 200 OK
 ```
+
+> Hàm cũ `analyze_receipt()` (chỉ trả `Insight`) vẫn tồn tại; route `/receipts/analyze` dùng `analyze_receipt_details()` để trả thêm draft receipt + detected fields + suggested transaction cho UI.
 
 ### 6.2 Feedback / Unlearning (POST /feedback/{insight_id})
 
@@ -1164,50 +1322,50 @@ Client → POST /feedback/{insight_id} {action: CONFIRM|REJECT, vector_id}
 [Auth Dependency] → validate JWT
     │
     ├─ CONFIRM → no-op (vector giữ lại trong ChromaDB)
-    └─ REJECT  → VectorStore.cache_delete(vector_id) → xóa khỏi ChromaDB
+    └─ REJECT  → vector_store.cache_delete(vector_id) → xóa khỏi ChromaDB
     │
     ▼
-FeedbackResponse {status: "ok"} → 200 OK
+FeedbackResponse {message} → 200 OK
 ```
 
-### 6.3 Cập nhật Ví / Giao dịch — Luồng 2 (Planned)
+### 6.3 Tạo Giao dịch — Luồng 2 (Implemented)
 
 ```
-Client → POST /wallets/transactions {wallet_id, amount, type, category}
+Client → POST /transactions {type, amount, category, receipt_id?, receipt_items?}
     │
     ▼
 [Auth Dependency] → validate JWT
     │
     ▼
-[CashFlowService.create_transaction(user_id, data)]
+[transactions router handler]
     │
     ├── INSERT INTO transactions
-    ├── UPDATE wallets SET balance = balance ± amount
-    └── check_goal_progress(user_id) → cập nhật goals.current_amount
+    └── (nếu có receipt_items) INSERT receipts + receipt_items
     │
     ▼
 TransactionResponse → 201 Created
 ```
 
-### 6.4 Tạo Báo cáo — Luồng 5 (Planned)
+> Không có cập nhật "số dư ví" — code hiện không có khái niệm `wallet`. Mục tiêu (`financial_goals`) được cập nhật qua route `/goals` riêng; `progress` tính khi đọc (`GoalResponse.from_goal`).
+
+### 6.4 Báo cáo Tài chính — Luồng 5 (Implemented, on-demand)
 
 ```
-Client → POST /reports/generate {period_start, period_end, report_type}
+Client → GET /reports/summary?range=...
     │
     ▼
 [Auth Dependency] → validate JWT
     │
     ▼
-[ReportingService.generate_monthly_report(user_id, period)]
+[reports.get_financial_report(range, user, db)]
     │
-    ├── SELECT transactions WHERE user_id AND period
-    ├── _aggregate_transactions() → summary_data dict
-    ├── GeminiClient.summarize_report(summary_data) → llm_summary
-    ├── INSERT INTO reports
-    └── generate_charts(report_id) → INSERT INTO charts
+    ├── _load_transactions / _load_goals / _load_assets  (SELECT theo user + range)
+    ├── _category_breakdown / _investment_summary / _goal_progress  (aggregate in-memory)
+    ├── gemini_client.generate_financial_report_review(payload) → ai_review
+    │        (fallback _fallback_* nếu LLM không sẵn sàng)
     │
     ▼
-ReportResponse {report_id, llm_summary, charts} → 201 Created
+FinancialReportResponse (số liệu + ai_review) → 200 OK   (KHÔNG ghi DB)
 ```
 
 ---
@@ -1220,9 +1378,9 @@ ReportResponse {report_id, llm_summary, charts} → 201 Created
 | Async FastAPI + asyncpg | Không block thread khi chờ DB / LLM, phù hợp với workload I/O-heavy |
 | Pydantic cho mọi model | Tự động validate, serialize/deserialize, type safety |
 | ChromaDB cho semantic cache | Cosine similarity search sub-millisecond, không cần viết ranking algorithm |
-| Stub pattern cho AI tools | Cho phép phát triển và test pipeline mà không cần model thực tế |
-| JWT stateless auth | Không cần session store, phù hợp với kiến trúc stateless REST API |
-| JSONB cho structured data (PostgreSQL) | Lưu asset_allocation, fund_suggestions, chart_data linh hoạt mà không cần bảng phụ |
-| Gemini 2.5 Flash cho tất cả LLM tasks | Balance tốt giữa chất lượng và chi phí; dùng Flash thay vì Pro trừ khi output không đủ |
-| 5 luồng độc lập | Mỗi luồng có service riêng — dễ mở rộng, test, và scale độc lập |
+| Stub fallback cho AI model | Pipeline không hard-fail khi weights/API chưa sẵn sàng (CV/OCR/Embedding/LLM đều có nhánh fallback xác định) — vẫn dev/test được offline |
+| Tầng xử lý bằng module hàm (không OOP) | Hàm không-state trả `ToolResult` — idiomatic Python, dễ test/monkeypatch, tránh "class giả"; OOP chỉ dùng cho tầng dữ liệu (Pydantic/ORM) |
+| JWT stateless auth (+ offline fallback) | Không cần session store; khi DB offline vẫn dựng `AuthenticatedUser` từ claim |
+| Gemini 2.5 Flash + Gemma cho LLM tasks | Flash cho insight/report, Gemma cho phân loại item — balance chất lượng/chi phí; JSON mode + `responseSchema` |
+| Báo cáo tính on-demand (không lưu reports/charts) | Tránh bảng phụ và đồng bộ stale; frontend render biểu đồ từ số liệu trả về |
 | Semantic cache trước LLM | Giảm ~80% LLM API calls — tiết kiệm chi phí và giảm latency |
