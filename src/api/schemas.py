@@ -347,6 +347,8 @@ class InvestmentAssetRequest(BaseModel):
     quantity: float
     purchase_price: float
     color: str = "#5BAAEC"
+    interest_rate: float | None = 0.0
+    term_months: int | None = 0
 
 
 class InvestmentAssetResponse(BaseModel):
@@ -362,6 +364,8 @@ class InvestmentAssetResponse(BaseModel):
     profit: float | None = None
     profit_percent: float | None = None
     color: str
+    interest_rate: float | None = 0.0
+    term_months: int | None = 0
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

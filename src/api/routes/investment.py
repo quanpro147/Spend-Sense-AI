@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -92,9 +93,21 @@ async def get_portfolio(
     
     response_items = []
     for asset in assets:
-        current_price = market_prices.get(asset.symbol, asset.purchase_price)
-        if current_price == 0.0:
-            current_price = asset.purchase_price
+        if asset.type == "saving":
+            # Savings current value grows with interest rate over time
+            # purchase_price is the principal. interest_rate is annual percentage (e.g. 5.5 representing 5.5% APR)
+            # Simple interest based on the number of days since created_at
+            interest_rate = asset.interest_rate or 0.0
+            created_date = asset.created_at or datetime.utcnow()
+            days_passed = (datetime.utcnow() - created_date).days
+            if days_passed < 0:
+                days_passed = 0
+            accrued_factor = 1.0 + (interest_rate / 100.0) * (days_passed / 365.0)
+            current_price = asset.purchase_price * accrued_factor
+        else:
+            current_price = market_prices.get(asset.symbol, asset.purchase_price)
+            if current_price == 0.0:
+                current_price = asset.purchase_price
             
         val = asset.quantity * current_price
         invested = asset.quantity * asset.purchase_price
@@ -115,6 +128,8 @@ async def get_portfolio(
                 profit=profit,
                 profit_percent=profit_pct,
                 color=asset.color,
+                interest_rate=asset.interest_rate,
+                term_months=asset.term_months,
                 updated_at=asset.updated_at,
             )
         )
@@ -214,14 +229,26 @@ async def add_portfolio_asset(
         quantity=body.quantity,
         purchase_price=normalized_price,
         color=body.color,
+        interest_rate=body.interest_rate,
+        term_months=body.term_months,
     )
     db.add(asset)
     await db.commit()
     await db.refresh(asset)
     
     # Return with evaluation properties
-    market_prices = get_market_prices([asset.symbol])
-    current_price = market_prices.get(asset.symbol, asset.purchase_price)
+    if asset.type == "saving":
+        interest_rate = asset.interest_rate or 0.0
+        created_date = asset.created_at or datetime.utcnow()
+        days_passed = (datetime.utcnow() - created_date).days
+        if days_passed < 0:
+            days_passed = 0
+        accrued_factor = 1.0 + (interest_rate / 100.0) * (days_passed / 365.0)
+        current_price = asset.purchase_price * accrued_factor
+    else:
+        market_prices = get_market_prices([asset.symbol])
+        current_price = market_prices.get(asset.symbol, asset.purchase_price)
+        
     val = asset.quantity * current_price
     invested = asset.quantity * asset.purchase_price
     profit = val - invested
@@ -240,6 +267,8 @@ async def add_portfolio_asset(
         profit=profit,
         profit_percent=profit_pct,
         color=asset.color,
+        interest_rate=asset.interest_rate,
+        term_months=asset.term_months,
         updated_at=asset.updated_at,
     )
 

@@ -263,6 +263,8 @@ export interface InvestmentAsset {
   profit?: number;
   profit_percent?: number;
   color: string;
+  interest_rate?: number;
+  term_months?: number;
   updated_at: string;
 }
 
@@ -343,6 +345,8 @@ export async function addAsset(payload: {
   quantity: number;
   purchase_price: number;
   color?: string;
+  interest_rate?: number;
+  term_months?: number;
 }): Promise<InvestmentAsset> {
   const token = localStorage.getItem(TOKEN_KEY);
   return request<InvestmentAsset>("/investment/portfolio", {

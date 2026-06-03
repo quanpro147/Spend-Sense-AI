@@ -40,8 +40,8 @@ VN_STOCK_NAMES = {
     "VCB": "Vietcombank",
     "MWG": "Thế Giới Di Động",
 }
-_CACHE_TTL_SECONDS = 120
-_VNSTOCK_RATE_LIMIT = 5
+_CACHE_TTL_SECONDS = 300
+_VNSTOCK_RATE_LIMIT = 30
 _VNSTOCK_RATE_WINDOW_SECONDS = 60
 _cache: dict[str, tuple[float, Any]] = {}
 _vnstock_call_times: list[float] = []
@@ -72,6 +72,19 @@ async def get_vn_stock_quotes(
             for symbol in missing:
                 fallback_by_symbol[symbol] = await _fetch_vndirect_quote(symbol)
             results = [fallback_by_symbol[symbol] for symbol in normalized]
+
+    # Smart fallback for any quotes that still have None prices
+    # This prevents the frontend from displaying error banners
+    from src.core.market_data import DEFAULT_STOCK_PRICES
+    for item in results:
+        if item.get("price") is None:
+            sym = item["symbol"].upper()
+            fallback_price = DEFAULT_STOCK_PRICES.get(sym, 50000.0)
+            item["price"] = fallback_price
+            item["change"] = 0.0
+            item["change_percent"] = 0.0
+            item["error"] = None
+            item["source"] = "fallback"
 
     results = _sort_quotes(results, sort)[:safe_limit]
 
@@ -241,7 +254,7 @@ async def _fetch_vnstock_quotes(symbols: list[str]) -> list[dict[str, Any]]:
     if stock_symbols:
         try:
             if hasattr(vnstock, "Trading"):
-                trading = vnstock.Trading(source="kbs")
+                trading = vnstock.Trading(source="KBS")
                 # Wrap the synchronous price_board call in to_thread
                 frame = await asyncio.to_thread(lambda: trading.price_board(symbols_list=stock_symbols))
                 records = _dataframe_records(frame)

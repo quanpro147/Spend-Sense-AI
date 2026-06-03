@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, String
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, String, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.db.base import Base
@@ -99,6 +99,8 @@ class InvestmentAsset(Base):
     quantity: Mapped[float] = mapped_column(Float, default=1.0)
     purchase_price: Mapped[float] = mapped_column(Float, default=0.0)
     color: Mapped[str] = mapped_column(String(20), default="#5BAAEC")
+    interest_rate: Mapped[float | None] = mapped_column(Float, nullable=True, default=0.0)
+    term_months: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

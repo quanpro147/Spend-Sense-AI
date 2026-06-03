@@ -191,7 +191,7 @@ export function InvestmentPage() {
   
   // Form states
   const [profileForm, setProfileForm] = useState({ risk_appetite: "moderate", capital: 0, goal: "" });
-  const [assetForm, setAssetForm] = useState({ symbol: "", name: "", type: "stock", quantity: 1, purchase_price: 0, color: "#5BAAEC" });
+  const [assetForm, setAssetForm] = useState({ symbol: "", name: "", type: "stock", quantity: 1, purchase_price: 0, color: "#5BAAEC", interest_rate: 0.0, term_months: 0 });
   const [aiText, setAiText] = useState("");
   const [aiParsing, setAiParsing] = useState(false);
   const [suggestions, setSuggestions] = useState<typeof POPULAR_SYMBOLS>([]);
@@ -215,6 +215,8 @@ export function InvestmentPage() {
           quantity: parsed.quantity,
           purchase_price: parsed.purchase_price,
           color: parsed.color,
+          interest_rate: 0.0,
+          term_months: 0,
         });
         setModalMode("manual"); // Switch to manual to review and edit
       } else {
@@ -432,7 +434,7 @@ export function InvestmentPage() {
       await addAsset(assetForm);
       await fetchPortfolio();
       setShowAssetModal(false);
-      setAssetForm({ symbol: "", name: "", type: "stock", quantity: 1, purchase_price: 0, color: "#5BAAEC" });
+      setAssetForm({ symbol: "", name: "", type: "stock", quantity: 1, purchase_price: 0, color: "#5BAAEC", interest_rate: 0.0, term_months: 0 });
       if (roboData) fetchRoboData();
     } catch (err: any) {
       setErrorMsg(err.message || "Lỗi thêm tài sản đầu tư.");
@@ -829,7 +831,10 @@ export function InvestmentPage() {
                               </span>
                               <div>
                                 <span className="font-semibold block text-stitch-on-surface">{asset.symbol}</span>
-                                <span className="text-xs text-stitch-on-surface-variant block max-w-[150px] truncate">{asset.name}</span>
+                                <span className="text-xs text-stitch-on-surface-variant block max-w-[150px] truncate text-ellipsis">
+                                  {asset.name}
+                                  {asset.type === "saving" && asset.interest_rate !== undefined && asset.interest_rate > 0 && ` (${asset.interest_rate}%${asset.term_months ? ` / ${asset.term_months}T` : ""})`}
+                                </span>
                               </div>
                             </div>
                           </td>
@@ -1624,7 +1629,9 @@ export function InvestmentPage() {
 
                 <div className="grid grid-cols-2 gap-md">
                   <div className="space-y-2">
-                    <label className="text-sm font-semibold text-stitch-on-surface block">Số lượng sở hữu</label>
+                    <label className="text-sm font-semibold text-stitch-on-surface block">
+                      {assetForm.type === "saving" ? "Số sổ / Khoản gửi" : "Số lượng sở hữu"}
+                    </label>
                     <input
                       type="number"
                       required
@@ -1633,12 +1640,14 @@ export function InvestmentPage() {
                       value={assetForm.quantity || ""}
                       onChange={(e) => setAssetForm({ ...assetForm, quantity: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-stitch-surface-container rounded-lg p-2.5 border border-stitch-outline-variant/60 text-sm focus:outline-none focus:ring-2 focus:ring-stitch-primary-container"
-                      placeholder="Ví dụ: 1000"
+                      placeholder={assetForm.type === "saving" ? "Ví dụ: 1" : "Ví dụ: 1000"}
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <label className="text-sm font-semibold text-stitch-on-surface block">Giá mua trung bình (VND)</label>
+                    <label className="text-sm font-semibold text-stitch-on-surface block">
+                      {assetForm.type === "saving" ? "Số tiền gửi (VND)" : "Giá mua trung bình (VND)"}
+                    </label>
                     <input
                       type="number"
                       required
@@ -1646,7 +1655,7 @@ export function InvestmentPage() {
                       value={assetForm.purchase_price || ""}
                       onChange={(e) => setAssetForm({ ...assetForm, purchase_price: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-stitch-surface-container rounded-lg p-2.5 border border-stitch-outline-variant/60 text-sm focus:outline-none focus:ring-2 focus:ring-stitch-primary-container"
-                      placeholder="Ví dụ: 72000"
+                      placeholder="Ví dụ: 50000000"
                     />
                     {assetForm.purchase_price > 0 && (
                       <div className="mt-1.5 text-xs text-stitch-on-surface-variant flex flex-col gap-1 border-t border-stitch-outline-variant/30 pt-1">
@@ -1689,6 +1698,34 @@ export function InvestmentPage() {
                     )}
                   </div>
                 </div>
+
+                {assetForm.type === "saving" && (
+                  <div className="grid grid-cols-2 gap-md mt-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-stitch-on-surface block">Lãi suất (% / năm)</label>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={assetForm.interest_rate || ""}
+                        onChange={(e) => setAssetForm({ ...assetForm, interest_rate: parseFloat(e.target.value) || 0 })}
+                        className="w-full bg-stitch-surface-container rounded-lg p-2.5 border border-stitch-outline-variant/60 text-sm focus:outline-none focus:ring-2 focus:ring-stitch-primary-container"
+                        placeholder="Ví dụ: 5.5"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-stitch-on-surface block">Kỳ hạn (tháng)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={assetForm.term_months || ""}
+                        onChange={(e) => setAssetForm({ ...assetForm, term_months: parseInt(e.target.value) || 0 })}
+                        className="w-full bg-stitch-surface-container rounded-lg p-2.5 border border-stitch-outline-variant/60 text-sm focus:outline-none focus:ring-2 focus:ring-stitch-primary-container"
+                        placeholder="Ví dụ: 12"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <label className="text-sm font-semibold text-stitch-on-surface block">Màu sắc biểu đồ</label>
