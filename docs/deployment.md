@@ -7,7 +7,7 @@
 Tài liệu này mô tả **sơ đồ triển khai (UML Deployment Diagram)** của SpendSense AI — thể hiện các **node** (thiết bị / máy chủ / dịch vụ đám mây) thực thi các thành phần của hệ thống và các **liên kết** giao tiếp giữa chúng.
 
 SpendSense AI là một **ứng dụng Web**, nên theo đúng mô hình web-based, sơ đồ gồm các nhóm node:
-- **Web clients** — trình duyệt trên máy tính (desktop) và trên điện thoại (mobile).
+- **Web client** — cùng một SPA responsive chạy trong trình duyệt, trên cả máy tính (desktop) lẫn điện thoại (mobile).
 - **Web/Application server** — máy chủ chạy backend và máy chủ tĩnh phân phối giao diện.
 - **Data nodes** — cơ sở dữ liệu quan hệ và vector store.
 - **External services** — các dịch vụ đám mây bên thứ ba (LLM, OAuth).
@@ -51,12 +51,8 @@ skinparam database {
 }
 
 ' ===================== CLIENT TIER =====================
-node "Desktop Web Client\n<<device>>" as Desktop {
-  artifact "React 19 SPA\n(browser runtime)" as DesktopSPA
-}
-
-node "Mobile Web Client\n<<device>>" as Mobile {
-  artifact "React 19 SPA" as MobileSPA
+node "Web Client\n(Desktop & Mobile browser)\n<<device>>" as Client {
+  artifact "React 19 SPA\n(responsive, browser runtime)" as ClientSPA
 }
 
 ' ===================== PRESENTATION HOST =====================
@@ -95,14 +91,11 @@ cloud "Google Identity\n<<external>>" as Google {
 }
 
 ' ===================== LINKS =====================
-Desktop --> CDN  : HTTPS\n(tải SPA)
-Mobile  --> CDN  : HTTPS\n(tải SPA)
+Client --> CDN  : HTTPS\n(tải SPA)
 
-Desktop --> Uvicorn : HTTPS / REST+JSON\nJWT Bearer
-Mobile  --> Uvicorn : HTTPS / REST+JSON\nPOST /receipts/analyze\n(multipart image)
+Client --> Uvicorn : HTTPS / REST+JSON\nJWT Bearer;\nPOST /receipts/analyze\n(multipart image)
 
-Desktop --> Google : HTTPS (OAuth credential)
-Mobile  --> Google : HTTPS (OAuth credential)
+Client --> Google : HTTPS (OAuth credential)
 
 Uvicorn --> Postgres   : asyncpg / TCP 5432\nTLS (ssl=require)
 Uvicorn --> ChromaDB   : HTTP :8000\n(vector upsert / query)
@@ -117,8 +110,7 @@ Uvicorn --> GeminiModel : HTTPS\n(insight gen + item classify,\nkhi cache miss)
 
 | Node | Stereotype | Thành phần chạy trên node | Vai trò |
 |------|------------|---------------------------|---------|
-| **Desktop Web Client** | `«device»` | React 19 SPA trong trình duyệt (Chrome/Firefox/Safari/Edge) | Người dùng trên máy tính: xem dashboard, insight, biểu đồ; upload ảnh hóa đơn; gửi feedback. Không chứa logic nghiệp vụ. |
-| **Mobile Web Client** | `«device»` | React 19 SPA trong trình duyệt di động (iOS Safari / Android Chrome) | Cùng một SPA như desktop, truy cập qua trình duyệt điện thoại. Là client web — **không có app native**. |
+| **Web Client** | `«device»` | React 19 SPA responsive trong trình duyệt — desktop (Chrome/Firefox/Safari/Edge) và mobile (iOS Safari / Android Chrome) | Người dùng cuối: xem dashboard, insight, biểu đồ; upload/chụp ảnh hóa đơn; gửi feedback. **Cùng một SPA** chạy trên mọi thiết bị — là client web, **không có app native**. Không chứa logic nghiệp vụ. |
 | **Frontend Web Host** (Static Hosting / CDN) | `«PaaS»` (cloud) | Các file tĩnh đã build của SPA (`frontend/dist/`: HTML/JS/CSS) | **Chỉ phục vụ file giao diện** (frontend), **không** chứa API. Khi người dùng mở URL, trình duyệt tải SPA từ node này; sau đó SPA tự gọi API sang **Application Server**. Dùng dịch vụ tĩnh có CDN edge (Vercel/Netlify-class) để tải nhanh. |
 | **Application Server** | `«container : Docker»` | `uvicorn` (ASGI) cổng **8080** chạy FastAPI + Pipeline + JWT Auth + các model AI in-process (YOLOv11, VietOCR, sentence-transformers) | Lõi xử lý của hệ thống: nhận request REST, điều phối pipeline phân tích hóa đơn, sinh insight, xác thực. Các model AI chạy **trong cùng tiến trình backend**, không tách thành dịch vụ riêng. |
 | **ChromaDB Server** | `«container : Docker»` | ChromaDB cổng **8000**, collection `receipt_insights` (cosine, vector 384 chiều) | Semantic cache: tra cứu tương đồng (similarity ≥ 0.9) để tái sử dụng insight, giảm chi phí gọi LLM. Lưu embedding + metadata insight. |
