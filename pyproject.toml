@@ -18,6 +18,10 @@ dependencies = [
     "vietocr>=0.3.7",
     # Vision: Object detection
     "ultralytics>=8.3.0",
+    # Deep-learning runtime (transitive via sentence-transformers/ultralytics/vietocr;
+    # declared explicitly so the CPU-only index in [tool.uv.sources] takes effect on Linux).
+    "torch>=2.11.0",
+    "torchvision>=0.26.0",
     # Embeddings
     "sentence-transformers>=3.3.0",
     # Vector store
@@ -69,6 +73,20 @@ dev = [
     "pytest-asyncio>=0.25.0",
     "pytest-cov>=6.0.0",
 ]
+
+# ── PyTorch CPU-only on Linux ─────────────────────────────────────────────
+# The default PyPI torch wheel for Linux x86_64 is the CUDA build (~5GB of
+# bundled nvidia-* libraries). This app runs CPU-only (device="cpu"), so on
+# Linux we pull torch/torchvision from PyTorch's CPU index instead. Windows
+# resolution is untouched (its default wheel is already CPU-only).
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]

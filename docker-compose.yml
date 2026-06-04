@@ -1,0 +1,66 @@
+# SpendSense AI — local/production deployment stack.
+#
+# Two containers (per docs/deployment.md):
+#   app    — FastAPI + AI models in-process, uvicorn :8080
+#   chroma — ChromaDB semantic-cache server :8000
+#
+# PostgreSQL is NOT here: it runs on Supabase (managed DBaaS), reached via
+# DATABASE_URL in .env. Frontend is deployed separately to a static host/CDN.
+#
+#   docker compose up -d            # build app + start everything
+#   docker compose up -d chroma     # ChromaDB only (e.g. for local `uv run` dev)
+#   docker compose ps               # status / health
+#   docker compose logs -f app      # follow backend logs
+#   docker compose down             # stop (named volumes persist)
+
+services:
+  app:
+    build: .
+    container_name: spendsense-app
+    ports:
+      - "8080:8080"
+    # Load secrets/config from .env (GEMINI_API_KEY, DATABASE_URL, JWT_SECRET_KEY…).
+    env_file:
+      - .env
+    # Explicit overrides win over env_file: inside the compose network the app
+    # reaches ChromaDB by its service name, not localhost.
+    environment:
+      - CHROMA_HOST=chroma
+      - CHROMA_PORT=8000
+      - API_HOST=0.0.0.0
+      - API_PORT=8080
+      - HF_HOME=/app/.cache/huggingface
+      - TORCH_HOME=/app/.cache/torch
+    volumes:
+      # Persist downloaded model weights (HF + Torch) across restarts.
+      - model-cache:/app/.cache
+    depends_on:
+      chroma:
+        condition: service_healthy
+    restart: unless-stopped
+
+  chroma:
+    # Pin to match the chromadb client lib in pyproject.toml (>=0.6.0 resolves to 1.5.x).
+    # A client/server major mismatch raises KeyError('_type') on collection create.
+    image: chromadb/chroma:1.5.9
+    container_name: spendsense-chroma
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/localhost/8000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  chroma-data:
+    name: spendsense-chroma-data
+  model-cache:
+    name: spendsense-model-cache

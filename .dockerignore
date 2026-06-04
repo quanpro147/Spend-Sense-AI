@@ -1,0 +1,40 @@
+# Keep the build context small and never bake secrets into the image.
+
+# Secrets — injected at runtime via compose env_file, not baked in
+.env
+.env.local
+.env.*.local
+
+# Python virtualenv & caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Frontend — deployed separately to a static host/CDN
+frontend/
+
+# VCS & tooling
+.git/
+.github/
+.claude/
+.agents/
+.vscode/
+.idea/
+
+# Docs & local data (not needed at runtime)
+docs/
+*.md
+bonus_context/
+
+# Downloaded model weights (fetched at runtime, cached on a volume)
+src/models/yolo/
+models/
+*.pt
